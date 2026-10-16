@@ -42,7 +42,8 @@ or a mix of both — and compare up to three scenarios side by side.
 4. Choose the **contribution frequency**: yearly, quarterly, or monthly.
 5. The app shows the **final portfolio value**, the **total amount invested**,
    the **net gain**, the annualized return (CAGR and/or IRR), and the
-   **maximum drawdown** — plus a return chart and a drawdown chart.
+   **maximum drawdown** — plus a return chart, a yearly-returns bar chart,
+   and a results table.
 6. Download any scenario's monthly data as a CSV if you want to explore further.
 
 **What the outputs mean**
@@ -142,16 +143,10 @@ def irr_annual(cashflows):
 
 
 # ---------------------------------------------------------------------------
-# Simulation engine (with configurable contribution frequency)
+# Simulation engine
 # ---------------------------------------------------------------------------
 def simulate(df, start_date, years, initial, contribution, escalation,
              frequency, mode="Nominal"):
-    """Run one scenario.
-
-    frequency: "Yearly", "Quarterly", or "Monthly".
-    Contributions are made at the start of the relevant period.
-    Escalation applies once per year (from year 1: year k = base * (1+g)^(k-1)).
-    """
     ret_col = "ret_nom" if mode == "Nominal" else "ret_real"
 
     start_date = pd.Timestamp(start_date).replace(day=1)
@@ -172,36 +167,30 @@ def simulate(df, start_date, years, initial, contribution, escalation,
     start_year = window["date"].iloc[0].year
     start_month = window["date"].iloc[0].month
 
-    # Contribution months within a year
     if frequency == "Yearly":
-        contrib_months = {start_month}  # start month each year (anniversary)
+        contrib_months = {start_month}
     elif frequency == "Quarterly":
         contrib_months = {(start_month - 1 + 3 * k) % 12 + 1 for k in range(4)}
-    else:  # Monthly
+    else:
         contrib_months = set(range(1, 13))
 
     for i, row in window.iterrows():
         contrib = 0.0
 
-        # Initial capital at month 0
         if i == 0:
             contrib += float(initial)
 
-        # Recurring contributions
         if contribution > 0:
             year_index = row["date"].year - start_year
             escalated = float(contribution) * (1 + escalation) ** year_index
 
             if frequency == "Yearly":
-                # One contribution per year, in the start month
                 if row["date"].month == start_month and (i > 0 or initial == 0):
                     contrib += escalated
                 elif i == 0:
                     contrib += escalated
             else:
-                # Quarterly or Monthly
                 if row["date"].month in contrib_months:
-                    # Skip the very first month if initial already covers it
                     if i == 0 and initial > 0:
                         pass
                     else:
@@ -322,7 +311,6 @@ for idx, sc in enumerate(st.session_state.scenarios):
             frequency=sc.get("frequency", "Yearly"),
         )
 
-        # --- Date input: typed text, so any date in the dataset works ---
         default_start = sc.get("start_date", date(1999, 1, 1))
         start_str = st.text_input(
             "Start date (YYYY-MM-DD)",
@@ -338,7 +326,6 @@ for idx, sc in enumerate(st.session_state.scenarios):
             st.error(f"Scenario {idx+1}: invalid date format. Use YYYY-MM-DD.")
             start_date_parsed = default_start
 
-        # Clamp
         if start_date_parsed < MIN_DATE.date():
             st.warning(f"Scenario {idx+1}: start before {MIN_DATE.date()} — clamped.")
             start_date_parsed = MIN_DATE.date()
@@ -407,8 +394,6 @@ if len(st.session_state.scenarios) < 3:
 # ---------------------------------------------------------------------------
 # Run simulations
 # ---------------------------------------------------------------------------
-st.subheader("Results")
-
 runs = []
 for idx, sc in enumerate(st.session_state.scenarios):
     if sc.get("initial", 0) == 0 and sc.get("contribution", 0) == 0:
@@ -448,8 +433,117 @@ if not runs:
     st.stop()
 
 # ---------------------------------------------------------------------------
-# KPI summary table
+# Chart helpers
 # ---------------------------------------------------------------------------
+def add_years_since_start(result):
+    res = result.copy()
+    res["years_since_start"] = (
+        (res["date"] - res["date"].iloc[0]).dt.days / 365.25
+    )
+    return res
+
+
+def compute_yearly_returns(result):
+    """Compute the calendar-year return of the portfolio for each year.
+
+    For each calendar year present in the simulation, take the portfolio value
+    at the first month and the last month of that year, and compute the return
+    over that span. Contributions during the year are NOT subtracted — so this
+    is a 'gross' year-on-year view of the portfolio's trajectory.
+    """
+    res = result.copy()
+    res["year"] = res["date"].dt.year
+
+    yearly = []
+    for year, grp in res.groupby("year"):
+        first_val = grp["portfolio"].iloc[0]
+        last_val = grp["portfolio"].iloc[-1]
+        if first_val > 0:
+            ret = (last_val / first_val) - 1
+        else:
+            ret = 0.0
+        yearly.append({"year": year, "return": ret})
+    return pd.DataFrame(yearly)
+
+
+# ---------------------------------------------------------------------------
+# RETURN chart
+# ---------------------------------------------------------------------------
+st.subheader("Return")
+
+final_summary = "  |  ".join(
+    f"**{r['name']}** — final: €{r['metrics']['final']:,.0f}"
+    + (
+        f", CAGR: {r['metrics']['cagr']*100:,.2f}%"
+        if r["metrics"]["cagr"] is not None
+        else (
+            f", IRR: {r['metrics']['irr']*100:,.2f}%"
+            if r["metrics"]["irr"] is not None
+            else ""
+        )
+    )
+    for r in runs
+)
+st.markdown(final_summary)
+
+fig_eq = go.Figure()
+for r in runs:
+    res = add_years_since_start(r["result"])
+    fig_eq.add_trace(go.Scatter(
+        x=res["years_since_start"], y=res["portfolio"],
+        mode="lines", name=r["name"],
+    ))
+
+fig_eq.update_layout(
+    xaxis_title="Years since start",
+    yaxis_title="Portfolio value",
+    yaxis_type="log" if log_scale == "Log" else "linear",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+st.plotly_chart(fig_eq, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# YEARLY RETURNS bar chart
+# ---------------------------------------------------------------------------
+st.subheader("Yearly returns")
+
+st.caption(
+    "Each bar shows the portfolio's change over one calendar year. "
+    "**Green = a positive year, red = a negative year.** "
+    "Contributions made during the year are included in the portfolio value, "
+    "so a green year does not necessarily mean the market went up — it means "
+    "your portfolio ended the year higher than it started."
+)
+
+fig_yr = go.Figure()
+for r in runs:
+    yearly = compute_yearly_returns(r["result"])
+    colors = ["rgba(46, 160, 67, 0.75)" if v >= 0 else "rgba(220, 53, 69, 0.75)"
+              for v in yearly["return"]]
+    fig_yr.add_trace(go.Bar(
+        x=yearly["year"],
+        y=yearly["return"] * 100,
+        name=r["name"],
+        marker_color=colors,
+        hovertemplate="Year %{x}<br>Return: %{y:.1f}%<extra></extra>",
+    ))
+
+fig_yr.update_layout(
+    xaxis_title="Calendar year",
+    yaxis_title="Yearly return (%)",
+    barmode="group",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+fig_yr.add_hline(y=0, line_width=1, line_color="black")
+st.plotly_chart(fig_yr, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Results table
+# ---------------------------------------------------------------------------
+st.subheader("Results table")
+
 summary_rows = []
 for r in runs:
     m = r["metrics"]
@@ -494,84 +588,6 @@ mode_label = (
     else "inflation-adjusted terms (start-of-period purchasing power)"
 )
 st.caption(f"All figures in **{mode_label}**. Price return only, excludes dividends.")
-
-# ---------------------------------------------------------------------------
-# Charts — x-axis is years since start
-# ---------------------------------------------------------------------------
-def add_years_since_start(result):
-    res = result.copy()
-    res["years_since_start"] = (
-        (res["date"] - res["date"].iloc[0]).dt.days / 365.25
-    )
-    return res
-
-
-st.subheader("Return")
-
-# On-screen summary of final values + CAGR
-final_summary = "  |  ".join(
-    f"**{r['name']}** — final: €{r['metrics']['final']:,.0f}"
-    + (
-        f", CAGR: {r['metrics']['cagr']*100:,.2f}%"
-        if r["metrics"]["cagr"] is not None
-        else (
-            f", IRR: {r['metrics']['irr']*100:,.2f}%"
-            if r["metrics"]["irr"] is not None
-            else ""
-        )
-    )
-    for r in runs
-)
-st.markdown(final_summary)
-
-fig_eq = go.Figure()
-for r in runs:
-    res = add_years_since_start(r["result"])
-    fig_eq.add_trace(go.Scatter(
-        x=res["years_since_start"], y=res["portfolio"],
-        mode="lines", name=r["name"],
-    ))
-
-fig_eq.update_layout(
-    xaxis_title="Years since start",
-    yaxis_title="Portfolio value",
-    yaxis_type="log" if log_scale == "Log" else "linear",
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-)
-st.plotly_chart(fig_eq, use_container_width=True)
-
-# ---------------------------------------------------------------------------
-# Drawdown chart — light red below 0, light green above 0, transparent fills
-# ---------------------------------------------------------------------------
-st.subheader("Drawdown")
-fig_dd = go.Figure()
-for r in runs:
-    res = add_years_since_start(r["result"])
-    dd = res["drawdown"] * 100
-    fig_dd.add_trace(go.Scatter(
-        x=res["years_since_start"], y=dd,
-        mode="lines", name=r["name"],
-        fill="tozeroy",
-        fillcolor="rgba(255, 99, 71, 0.25)",   # light red
-        line=dict(width=1.5),
-    ))
-
-# Green band above zero for visual reference
-fig_dd.add_hrect(
-    y0=0, y1=5,
-    fillcolor="rgba(144, 238, 144, 0.15)",  # light green
-    line_width=0,
-    layer="below",
-)
-
-fig_dd.update_layout(
-    xaxis_title="Years since start",
-    yaxis_title="Drawdown (%)",
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-)
-st.plotly_chart(fig_dd, use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # CSV export
