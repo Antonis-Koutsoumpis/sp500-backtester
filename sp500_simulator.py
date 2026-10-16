@@ -14,9 +14,49 @@ st.set_page_config(
 )
 
 st.title("📈 S&P 500 Backtester")
-st.caption(
-    "**Price return only, excludes dividends.** "
-    "Historical monthly index values from 1927 to today."
+
+st.markdown(
+    """
+**What this app does**
+
+This tool lets you simulate how a hypothetical investment in the S&P 500 would
+have performed if you had started at any month between **31 December 1927** and
+**14 October 2026**. You can model a single lump sum, regular yearly
+contributions, or a mix of both — and compare up to three scenarios side by side.
+
+**How to use it**
+
+1. In the sidebar, choose whether you want results in *Nominal* or
+   *Inflation-adjusted* terms.
+2. Set up one or more scenarios:
+   - **Lump sum** — invest once at the start, nothing after.
+   - **DCA** (Dollar-Cost Averaging) — invest the same amount every January.
+   - **Escalated DCA** — invest every January, increasing the amount each year
+     by your escalation percentage (e.g. to track salary growth).
+   - **Custom** — set initial capital, yearly contributions, and escalation freely.
+3. Pick a **start date** and a **duration** (in years).
+4. The app shows the **final portfolio value**, the **total amount you invested**,
+   the **net gain**, the annualized return (CAGR and/or IRR), and the
+   **maximum drawdown** — plus an equity curve and drawdown chart.
+5. Download any scenario's monthly data as a CSV if you want to explore further.
+
+**What the outputs mean**
+
+- **Final value** — portfolio value at the end of the chosen period.
+- **Invested** — total capital you put in (initial + all contributions).
+- **Net gain** — final value minus invested.
+- **CAGR** — compound annual growth rate; shown only when there are no
+  contributions (pure lump sum), since CAGR assumes a single initial investment.
+- **IRR** — internal rate of return; the fair annualized return when
+  contributions exist. Accounts for the timing of each cash flow.
+- **Max drawdown** — the largest peak-to-trough decline experienced during
+  the period.
+
+**Important**
+
+All results are **price return only and exclude dividends**. The data range
+covers **31 December 1927 to 14 October 2026**.
+"""
 )
 
 # ---------------------------------------------------------------------------
@@ -30,14 +70,11 @@ def load_index(path):
     df = pd.read_csv(path)
     df.columns = [c.strip() for c in df.columns]
 
-    # Column names in the CSV: date, inflation_adjusted, nominal
     df["date"] = pd.to_datetime(df["date"], format="%m/%d/%Y")
     df = df.sort_values("date").reset_index(drop=True)
 
-    # Drop any row with missing values in either series
     df = df.dropna(subset=["inflation_adjusted", "nominal"]).reset_index(drop=True)
 
-    # Monthly returns
     df["ret_real"] = df["inflation_adjusted"].pct_change()
     df["ret_nom"] = df["nominal"].pct_change()
 
@@ -57,8 +94,12 @@ value_mode = st.sidebar.radio(
     "Value mode",
     options=["Nominal", "Inflation-adjusted"],
     index=0,
-    help="Nominal = actual euro/dollar amounts of the day. "
-         "Inflation-adjusted = expressed in start-of-period purchasing power.",
+    help=(
+        "**Nominal** — actual euro/dollar amounts of the day.\n\n"
+        "**Inflation-adjusted** — expresses past values in start-of-period "
+        "purchasing power, i.e. it assumes inflation didn't exist, so you can "
+        "compare returns across different eras in 'real' terms."
+    ),
 )
 
 log_scale = st.sidebar.radio(
@@ -70,17 +111,11 @@ log_scale = st.sidebar.radio(
 # ---------------------------------------------------------------------------
 # IRR helper (internal bisection; no external dependency)
 # ---------------------------------------------------------------------------
-def irr_monthly(cashflows, guess=0.01, tol=1e-7, max_iter=200):
-    """Return the monthly IRR of a series of cashflows.
-
-    cashflows: list of floats. Negative = investment, positive = final value.
-    Convention: the last cashflow is the final portfolio value (positive).
-    """
+def irr_monthly(cashflows, tol=1e-7, max_iter=200):
     def npv(rate):
         return sum(cf / (1 + rate) ** t for t, cf in enumerate(cashflows))
 
     lo, hi = -0.99, 1.0
-    # Expand hi if needed
     for _ in range(20):
         if npv(lo) * npv(hi) < 0:
             break
@@ -108,17 +143,6 @@ def irr_annual(cashflows):
 # ---------------------------------------------------------------------------
 def simulate(df, start_date, years, initial, yearly, escalation,
              contribution_month, mode="Nominal"):
-    """Run one scenario.
-
-    Conventions (locked in):
-    - Start = first day of the chosen month.
-    - End = start + years - 1 month, capped at last available data row.
-    - Initial capital invested at the start of month 0 (before first return).
-    - Yearly contributions at the start of the start month for year 1,
-      then each January thereafter.
-    - Escalation applies from year 1: year k contribution = base * (1+g)^(k-1).
-    - Monthly return applied at end of each month (month 0 return counts).
-    """
     col = "nominal" if mode == "Nominal" else "inflation_adjusted"
     ret_col = "ret_nom" if mode == "Nominal" else "ret_real"
 
@@ -135,36 +159,29 @@ def simulate(df, start_date, years, initial, yearly, escalation,
     invested = 0.0
     peak = 0.0
     rows = []
-    cashflows = []  # for IRR
+    cashflows = []
 
     start_year = window["date"].iloc[0].year
-    start_month = window["date"].iloc[0].month
 
     for i, row in window.iterrows():
         contrib = 0.0
 
-        # --- Initial capital at month 0 ---
         if i == 0:
             contrib += float(initial)
 
-        # --- Yearly contribution ---
-        # Year 1: at the start month. Years 2+: every January.
         if yearly > 0:
             if i == 0:
-                # Year 1 contribution at start month (escalation^0 = 1)
                 contrib += float(yearly)
             elif row["date"].month == 1:
                 year_index = row["date"].year - start_year
                 contrib += float(yearly) * (1 + escalation) ** year_index
 
-        # Apply contribution
         portfolio += contrib
         invested += contrib
 
         if contrib > 0:
             cashflows.append(-contrib)
 
-        # Apply monthly return (month 0 has no prior value, so no return yet)
         if i > 0:
             r = row[ret_col]
             if pd.notna(r):
@@ -182,23 +199,18 @@ def simulate(df, start_date, years, initial, yearly, escalation,
         })
 
     result = pd.DataFrame(rows)
-
-    # Final cashflow for IRR (portfolio value at end)
     cashflows.append(result["portfolio"].iloc[-1])
 
-    # Metrics
     final_value = result["portfolio"].iloc[-1]
     net_gain = final_value - invested
     net_gain_pct = net_gain / invested if invested > 0 else 0.0
     years_actual = (result["date"].iloc[-1] - result["date"].iloc[0]).days / 365.25
 
-    # CAGR: only meaningful for lump-sum-only (no contributions)
     if initial > 0 and yearly == 0:
         cagr = (final_value / initial) ** (1 / years_actual) - 1 if years_actual > 0 else 0.0
     else:
         cagr = None
 
-    # IRR: only meaningful when contributions exist
     try:
         irr = irr_annual(cashflows) if yearly > 0 or initial > 0 else None
     except Exception:
@@ -243,7 +255,14 @@ def scenario_defaults(kind):
     return dict(initial=10000.0, yearly=5000.0, escalation=0.02)
 
 
-# Build scenario inputs
+TYPE_HELP = (
+    "**Lump sum** — invest a single amount once at the start, nothing after.\n\n"
+    "**DCA** (Dollar-Cost Averaging) — invest the same amount every January.\n\n"
+    "**Escalated DCA** — invest every January, increasing the amount each year "
+    "by the escalation percentage (e.g. to track salary growth).\n\n"
+    "**Custom** — set initial capital, yearly contributions, and escalation freely."
+)
+
 for idx, sc in enumerate(st.session_state.scenarios):
     with st.sidebar.expander(f"Scenario {idx+1}: {sc['name']}", expanded=(idx == 0)):
         kind = st.selectbox(
@@ -251,6 +270,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
             options=["Lump sum", "DCA", "Escalated DCA", "Custom"],
             index=["Lump sum", "DCA", "Escalated DCA", "Custom"].index(sc["type"]),
             key=f"type_{idx}",
+            help=TYPE_HELP,
         )
 
         defaults = scenario_defaults(kind) if kind != "Custom" else dict(
@@ -291,7 +311,6 @@ for idx, sc in enumerate(st.session_state.scenarios):
             key=f"esc_{idx}",
         ) / 100.0
 
-        # Persist for next run
         sc.update({
             "type": kind,
             "start_date": start_date,
@@ -322,7 +341,6 @@ st.subheader("Results")
 
 runs = []
 for idx, sc in enumerate(st.session_state.scenarios):
-    # Skip empty scenarios
     if sc.get("initial", 0) == 0 and sc.get("yearly", 0) == 0:
         st.warning(f"Scenario {idx+1} has no contributions — skipped.")
         continue
@@ -341,7 +359,6 @@ for idx, sc in enumerate(st.session_state.scenarios):
         st.warning(f"Scenario {idx+1}: no data in chosen window — skipped.")
         continue
 
-    # Clip warning
     requested_end = pd.Timestamp(sc["start_date"]).replace(day=1) + \
         pd.DateOffset(years=sc["years"]) - pd.DateOffset(months=1)
     if requested_end > MAX_DATE:
@@ -391,28 +408,34 @@ mode_label = (
 st.caption(f"All figures in **{mode_label}**. Price return only, excludes dividends.")
 
 # ---------------------------------------------------------------------------
-# Charts
+# Charts — x-axis is years since start (aligned for comparison)
 # ---------------------------------------------------------------------------
-st.subheader("Equity curve")
+def add_years_since_start(result):
+    res = result.copy()
+    res["years_since_start"] = (
+        (res["date"] - res["date"].iloc[0]).dt.days / 365.25
+    )
+    return res
+
+
+st.subheader("Return")
 
 fig_eq = go.Figure()
 for r in runs:
-    res = r["result"]
+    res = add_years_since_start(r["result"])
     fig_eq.add_trace(go.Scatter(
-        x=res["date"], y=res["portfolio"],
+        x=res["years_since_start"], y=res["portfolio"],
         mode="lines", name=r["name"],
     ))
-    # Faint invested line
     fig_eq.add_trace(go.Scatter(
-        x=res["date"], y=res["invested"],
+        x=res["years_since_start"], y=res["invested"],
         mode="lines", name=f"{r['name']} — invested",
         line=dict(dash="dot", width=1),
         opacity=0.5,
-        showlegend=True,
     ))
 
 fig_eq.update_layout(
-    xaxis_title="Date",
+    xaxis_title="Years since start",
     yaxis_title="Portfolio value",
     yaxis_type="log" if log_scale == "Log" else "linear",
     hovermode="x unified",
@@ -423,14 +446,14 @@ st.plotly_chart(fig_eq, use_container_width=True)
 st.subheader("Drawdown")
 fig_dd = go.Figure()
 for r in runs:
-    res = r["result"]
+    res = add_years_since_start(r["result"])
     fig_dd.add_trace(go.Scatter(
-        x=res["date"], y=res["drawdown"] * 100,
+        x=res["years_since_start"], y=res["drawdown"] * 100,
         mode="lines", name=r["name"],
         fill="tozeroy",
     ))
 fig_dd.update_layout(
-    xaxis_title="Date",
+    xaxis_title="Years since start",
     yaxis_title="Drawdown (%)",
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -441,6 +464,8 @@ st.plotly_chart(fig_dd, use_container_width=True)
 # CSV export
 # ---------------------------------------------------------------------------
 st.subheader("Export")
+
+st.markdown("You can export the data in .csv format below.")
 
 for r in runs:
     res = r["result"].copy()
