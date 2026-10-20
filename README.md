@@ -3,6 +3,8 @@
 Interactive Streamlit app to backtest S&P 500 investment strategies against
 historical monthly data from 31-12-1927 to 14-10-2026.
 
+This repository is linked to the Streamlit app [S&P 500 Backtester](https://sp500-backtester.streamlit.app/).
+
 ## What it does
 
 - Simulates lump sum, DCA (dollar-cost averaging), and escalated DCA strategies
