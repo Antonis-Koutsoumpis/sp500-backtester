@@ -102,7 +102,11 @@ automatically every day.
    - **Escalated DCA** — invest on a regular schedule, increasing the amount
      each year by your escalation percentage.
    - **Custom** — set initial capital, contributions, and escalation freely.
-3. Pick a **start date** (type it in manually if you like) and a **duration**.
+3. Pick the **time window** on the historical chart: choose a length
+   (5–30 years, full history or custom), then drag on the chart or use the
+   slider and ◀ ▶ buttons to move it. The window's total growth and CAGR are
+   shown right below the chart. (Untick *Use the time window from the chart*
+   in a scenario to type its own start date and duration instead.)
 4. Choose the **contribution frequency**: yearly, quarterly, or monthly.
 5. The app shows the **final portfolio value**, the **total amount invested**,
    the **net gain**, the annualized return (CAGR and/or IRR), and the
@@ -147,6 +151,14 @@ value_mode = st.sidebar.radio(
     ),
 )
 
+log_scale = st.sidebar.radio(
+    "Y-axis scale (charts)",
+    options=["Linear", "Log"],
+    index=0,
+    help="Log scale makes equal percentage moves look equally large — "
+         "useful for long histories.",
+)
+
 df = index_frame(index_id, value_mode)
 if len(df) < 2:
     st.warning(
@@ -156,6 +168,237 @@ if len(df) < 2:
     st.stop()
 MIN_DATE = df["date"].min()
 MAX_DATE = df["date"].max()
+
+# ---------------------------------------------------------------------------
+# Historical chart and time window
+# ---------------------------------------------------------------------------
+# The window is kept in st.session_state as two month strings ("YYYY-MM"):
+# win_start and win_end. It changes through the window-length buttons, the
+# slider, the ◀ ▶ buttons, a click on the chart (moves the window there) or a
+# horizontal drag across the chart (sets a custom start and end).
+ss = st.session_state
+VALUE_COL = "nominal" if value_mode == "Nominal" else "inflation_adjusted"
+MONTHS = df["date"].dt.to_period("M").astype(str).tolist()
+N_MONTHS = len(MONTHS)
+PRESET_YEARS = [5, 10, 15, 20, 25, 30]
+PRESETS = [f"{n} years" for n in PRESET_YEARS if 12 * n <= N_MONTHS]
+WINDOW_OPTIONS = PRESETS + ["Full history", "Custom"]
+
+
+def month_label(m):
+    return pd.Period(m, "M").strftime("%b %Y")
+
+
+def preset_months(choice):
+    return 12 * int(choice.split()[0]) if choice in PRESETS else None
+
+
+def month_index(ts):
+    """Position in MONTHS of the month containing ts (clamped to the data)."""
+    m = str(pd.Timestamp(ts).to_period("M"))
+    if m <= MONTHS[0]:
+        return 0
+    if m >= MONTHS[-1]:
+        return N_MONTHS - 1
+    return next(i for i, x in enumerate(MONTHS) if x >= m)
+
+
+def to_timestamp(x):
+    if isinstance(x, (int, float)):
+        return pd.Timestamp(x, unit="ms")
+    return pd.Timestamp(x)
+
+
+if ss.get("win_len") not in WINDOW_OPTIONS:
+    ss.win_len = "10 years" if "10 years" in PRESETS else "Full history"
+if ss.get("win_start") not in MONTHS or ss.get("win_end") not in MONTHS:
+    _L = preset_months(ss.win_len) or N_MONTHS
+    ss.win_start, ss.win_end = MONTHS[N_MONTHS - _L], MONTHS[-1]
+ss.setdefault("chart_nonce", 0)
+
+# Apply a click or drag made on the chart in the previous interaction.
+_chart_key = f"hist_chart_{ss.chart_nonce}"
+try:
+    _sel = ss[_chart_key]["selection"] if _chart_key in ss else None
+except Exception:
+    _sel = None
+if _sel:
+    _boxes = _sel.get("box") or []
+    _points = _sel.get("points") or []
+    _si, _ei = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
+    _applied = False
+    if _boxes and _boxes[-1].get("x"):
+        _xs = [to_timestamp(x) for x in _boxes[-1]["x"]]
+        _a, _b = month_index(min(_xs)), month_index(max(_xs))
+        if ss.win_len in PRESETS:
+            # Fixed length: the drag says where the window should start.
+            _len = preset_months(ss.win_len) - 1
+            _a = min(_a, N_MONTHS - 1 - _len)
+            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_a + _len]
+        else:
+            # Custom / full history: the drag sets both start and end.
+            if _b <= _a:
+                _b = min(_a + 1, N_MONTHS - 1)
+                _a = _b - 1
+            ss.win_len = "Custom"
+            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_b]
+        _applied = True
+    elif _points and _points[0].get("x") is not None:
+        _a = month_index(to_timestamp(_points[0]["x"]))
+        if ss.win_len == "Full history":
+            ss.win_len = "Custom"
+            ss.win_start, ss.win_end = MONTHS[min(_a, N_MONTHS - 2)], MONTHS[-1]
+        else:
+            _len = preset_months(ss.win_len) - 1 if ss.win_len in PRESETS else _ei - _si
+            _a = min(_a, N_MONTHS - 1 - _len)
+            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_a + _len]
+        _applied = True
+    if _applied:
+        ss.chart_nonce += 1  # a fresh chart widget clears the old selection
+        _chart_key = f"hist_chart_{ss.chart_nonce}"
+
+
+def _slider_fixed_changed():
+    v = ss.get("win_slider_fixed")
+    if isinstance(v, str) and v in MONTHS:
+        ss.win_start = v
+
+
+def _shift_window(months):
+    si_, ei_ = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
+    months = max(-si_, min(months, N_MONTHS - 1 - ei_))
+    ss.win_start, ss.win_end = MONTHS[si_ + months], MONTHS[ei_ + months]
+
+
+st.subheader(f"Historical chart — {IDX['name']}")
+
+st.radio(
+    "Time window",
+    options=WINDOW_OPTIONS,
+    key="win_len",
+    horizontal=True,
+    help=(
+        "**Fixed length (5–30 years):** drag on the chart starting where you "
+        "want the window to begin — it moves there and keeps its length. "
+        "Fine-tune with the slider or the ◀ ▶ buttons.\n\n"
+        "**Custom:** drag across the chart from the start to the end date you "
+        "want, or use the two-handle slider.\n\n"
+        "The scenarios in the sidebar use this window unless you untick "
+        "*Use the time window from the chart*."
+    ),
+)
+
+# Resolve the window for the chosen length.
+si, ei = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
+WIN_MONTHS = preset_months(ss.win_len)
+if WIN_MONTHS:
+    si = min(si, N_MONTHS - WIN_MONTHS)
+    ei = si + WIN_MONTHS - 1
+elif ss.win_len == "Full history":
+    si, ei = 0, N_MONTHS - 1
+elif ei <= si:
+    ei = min(si + 1, N_MONTHS - 1)
+    si = ei - 1
+ss.win_start, ss.win_end = MONTHS[si], MONTHS[ei]
+
+slider_col, back_col, fwd_col = st.columns([8, 1, 1], vertical_alignment="bottom")
+with slider_col:
+    if WIN_MONTHS:
+        ss.win_slider_fixed = ss.win_start
+        st.select_slider(
+            "Window start",
+            options=MONTHS[: N_MONTHS - WIN_MONTHS + 1],
+            key="win_slider_fixed",
+            format_func=month_label,
+            on_change=_slider_fixed_changed,
+        )
+    elif ss.win_len == "Custom":
+        # Two-handle sliders take their shape from `value`, so the window is
+        # passed in directly; the key changes whenever the window is changed
+        # elsewhere (chart, buttons) so the slider follows it.
+        _rng = st.select_slider(
+            "Window start and end",
+            options=MONTHS,
+            value=(ss.win_start, ss.win_end),
+            key=f"win_slider_range_{ss.win_start}_{ss.win_end}",
+            format_func=month_label,
+        )
+        if tuple(_rng) != (ss.win_start, ss.win_end) and _rng[0] != _rng[1]:
+            ss.win_start, ss.win_end = _rng
+            si, ei = MONTHS.index(_rng[0]), MONTHS.index(_rng[1])
+    else:
+        st.caption("Showing the full history. Choose a window length, or drag "
+                   "across the chart to select a period.")
+if ss.win_len != "Full history":
+    back_col.button("◀ 1 yr", on_click=_shift_window, args=(-12,),
+                    disabled=si == 0, width="stretch",
+                    help="Move the window one year earlier")
+    fwd_col.button("1 yr ▶", on_click=_shift_window, args=(12,),
+                   disabled=ei == N_MONTHS - 1, width="stretch",
+                   help="Move the window one year later")
+
+WIN_START = pd.Period(ss.win_start, "M").start_time
+WIN_END = pd.Period(ss.win_end, "M").end_time.normalize()
+
+in_win = df.iloc[si: ei + 1]
+fig_hist = go.Figure()
+fig_hist.add_trace(go.Scatter(
+    x=df["date"], y=df[VALUE_COL], name=IDX["name"],
+    mode="lines+markers",
+    # Invisible markers make every month clickable and selectable.
+    marker=dict(size=8, opacity=0),
+    selected=dict(marker=dict(opacity=0)),
+    unselected=dict(marker=dict(opacity=0)),
+    line=dict(color="rgba(120, 130, 145, 0.9)", width=1.5),
+    hovertemplate="%{x|%b %Y}: %{y:,.2f}<extra></extra>",
+))
+fig_hist.add_trace(go.Scatter(
+    x=in_win["date"], y=in_win[VALUE_COL], name="Selected window",
+    mode="lines", line=dict(color="#1f77b4", width=2.5), hoverinfo="skip",
+))
+fig_hist.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
+                   opacity=0.12, line_width=0, layer="below")
+fig_hist.update_layout(
+    dragmode="select",
+    selectdirection="h",
+    clickmode="event+select",  # a click selects the month under the cursor
+    hovermode="x",
+    showlegend=False,
+    height=380,
+    margin=dict(t=10, b=10),
+    yaxis_title=(f"Index level ({IDX['currency']})" if value_mode == "Nominal"
+                 else f"Index level (today's {IDX['currency']})"),
+    yaxis_type="log" if log_scale == "Log" else "linear",
+)
+st.plotly_chart(
+    fig_hist,
+    key=_chart_key,
+    on_select="rerun",
+    selection_mode=("points", "box"),
+    width="stretch",
+    config={"displaylogo": False},
+)
+
+_v0, _v1 = in_win[VALUE_COL].iloc[0], in_win[VALUE_COL].iloc[-1]
+_wyears = (in_win["date"].iloc[-1] - in_win["date"].iloc[0]).days / 365.25
+_wgrowth = _v1 / _v0 - 1
+_wcagr = (_v1 / _v0) ** (1 / _wyears) - 1 if _wyears > 0 else None
+st.markdown(f"**Selected window:** {month_label(ss.win_start)} – "
+            f"{month_label(ss.win_end)} ({_wyears:.1f} years)")
+w2, w3, w4 = st.columns(3)
+w2.metric("Index level", f"{_v0:,.0f} → {_v1:,.0f}")
+w3.metric("Index total growth", f"{_wgrowth * 100:+,.1f}%",
+          help="Change in the index level over the window (price only, "
+               "no dividends).")
+w4.metric("Index CAGR", f"{_wcagr * 100:,.2f}%" if _wcagr is not None else "—",
+          help="Average yearly growth of the index over the window.")
+if WIN_MONTHS:
+    _tip = ("drag on the chart from the point where the window should start — "
+            "it keeps its length. Choose *Custom* to pick both start and end.")
+else:
+    _tip = "drag across the chart from the start date to the end date you want."
+st.caption(f"Tip: {_tip} The scenarios below are calculated over this window.")
+
 
 # ---------------------------------------------------------------------------
 # About the selected index
@@ -193,12 +436,6 @@ with st.expander("📚 Compare all available indices", expanded=False):
     if META.get("updated_utc"):
         st.caption(f"Data last updated: {META['updated_utc']}.")
 
-log_scale = st.sidebar.radio(
-    "Y-axis scale (charts)",
-    options=["Linear", "Log"],
-    index=0,
-)
-
 # ---------------------------------------------------------------------------
 # IRR helper
 # ---------------------------------------------------------------------------
@@ -233,13 +470,16 @@ def irr_annual(cashflows):
 # Simulation engine
 # ---------------------------------------------------------------------------
 def simulate(df, start_date, years, initial, contribution, escalation,
-             frequency, mode="Nominal"):
+             frequency, mode="Nominal", end_date=None):
     ret_col = "ret_nom" if mode == "Nominal" else "ret_real"
 
     start_date = pd.Timestamp(start_date).replace(day=1)
 
     # Last day of the final month, so that month's end-of-month row is included.
-    end_target = start_date + pd.DateOffset(years=int(years)) - pd.DateOffset(days=1)
+    if end_date is None:
+        end_target = start_date + pd.DateOffset(years=int(years)) - pd.DateOffset(days=1)
+    else:
+        end_target = pd.Timestamp(end_date)
     end_date = min(end_target, MAX_DATE)
 
     window = df[(df["date"] >= start_date) & (df["date"] <= end_date)].reset_index(drop=True)
@@ -400,34 +640,47 @@ for idx, sc in enumerate(st.session_state.scenarios):
             frequency=sc.get("frequency", "Yearly"),
         )
 
+        use_window = st.checkbox(
+            "Use the time window from the chart",
+            value=sc.get("use_window", True),
+            key=f"usewin_{idx}",
+            help="Untick to give this scenario its own start date and duration.",
+        )
+
         default_start = sc.get("start_date", max(date(1999, 1, 1), MIN_DATE.date()))
-        start_str = st.text_input(
-            "Start date (YYYY-MM-DD)",
-            value=default_start.strftime("%Y-%m-%d")
-            if isinstance(default_start, date) else str(default_start),
-            key=f"start_str_{idx}",
-            help=f"Any date between {MIN_DATE.date()} and {MAX_DATE.date()}. "
-                 "The simulation starts from the first day of that month.",
-        )
-        try:
-            start_date_parsed = pd.to_datetime(start_str).date()
-        except Exception:
-            st.error(f"Scenario {idx+1}: invalid date format. Use YYYY-MM-DD.")
-            start_date_parsed = default_start
+        if use_window:
+            st.caption(f"📅 {month_label(ss.win_start)} – {month_label(ss.win_end)} "
+                       "(set on the chart)")
+            start_date_parsed = WIN_START.date()
+            years = sc.get("years", 10)
+        else:
+            start_str = st.text_input(
+                "Start date (YYYY-MM-DD)",
+                value=default_start.strftime("%Y-%m-%d")
+                if isinstance(default_start, date) else str(default_start),
+                key=f"start_str_{idx}",
+                help=f"Any date between {MIN_DATE.date()} and {MAX_DATE.date()}. "
+                     "The simulation starts from the first day of that month.",
+            )
+            try:
+                start_date_parsed = pd.to_datetime(start_str).date()
+            except Exception:
+                st.error(f"Scenario {idx+1}: invalid date format. Use YYYY-MM-DD.")
+                start_date_parsed = default_start
 
-        if start_date_parsed < MIN_DATE.date():
-            st.warning(f"Scenario {idx+1}: start before {MIN_DATE.date()} — clamped.")
-            start_date_parsed = MIN_DATE.date()
-        if start_date_parsed > MAX_DATE.date():
-            st.warning(f"Scenario {idx+1}: start after {MAX_DATE.date()} — clamped.")
-            start_date_parsed = MAX_DATE.date()
+            if start_date_parsed < MIN_DATE.date():
+                st.warning(f"Scenario {idx+1}: start before {MIN_DATE.date()} — clamped.")
+                start_date_parsed = MIN_DATE.date()
+            if start_date_parsed > MAX_DATE.date():
+                st.warning(f"Scenario {idx+1}: start after {MAX_DATE.date()} — clamped.")
+                start_date_parsed = MAX_DATE.date()
 
-        years = st.number_input(
-            "Duration (years)",
-            min_value=1, max_value=100,
-            value=sc.get("years", 10),
-            key=f"years_{idx}",
-        )
+            years = st.number_input(
+                "Duration (years)",
+                min_value=1, max_value=100,
+                value=sc.get("years", 10),
+                key=f"years_{idx}",
+            )
         initial = st.number_input(
             f"Initial capital ({CUR})",
             min_value=0.0, step=1000.0,
@@ -460,6 +713,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
             "type": kind,
             "start_date": start_date_parsed,
             "years": int(years),
+            "use_window": use_window,
             "initial": initial,
             "contribution": contribution,
             "frequency": frequency,
@@ -498,6 +752,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
         escalation=sc["escalation"],
         frequency=sc["frequency"],
         mode=value_mode,
+        end_date=WIN_END if sc.get("use_window") else None,
     )
     if result is None:
         st.warning(f"Scenario {idx+1}: no data in chosen window — skipped.")
@@ -505,7 +760,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
 
     requested_end = pd.Timestamp(sc["start_date"]).replace(day=1) + \
         pd.DateOffset(years=sc["years"]) - pd.DateOffset(days=1)
-    if requested_end > MAX_DATE:
+    if not sc.get("use_window") and requested_end > MAX_DATE:
         st.info(
             f"Scenario {idx+1}: requested end {requested_end:%b %Y} "
             f"beyond available data — capped at {MAX_DATE:%b %Y}."
@@ -560,20 +815,22 @@ def compute_yearly_returns(result):
 # ---------------------------------------------------------------------------
 st.subheader("Return")
 
-final_summary = "  |  ".join(
-    f"**{r['name']}** — final: {CUR}{r['metrics']['final']:,.0f}"
-    + (
-        f", CAGR: {r['metrics']['cagr']*100:,.2f}%"
-        if r["metrics"]["cagr"] is not None
-        else (
-            f", IRR: {r['metrics']['irr']*100:,.2f}%"
-            if r["metrics"]["irr"] is not None
-            else ""
-        )
-    )
-    for r in runs
-)
-st.markdown(final_summary)
+for r in runs:
+    m = r["metrics"]
+    st.markdown(f"**{r['name']}** · {m['start']:%b %Y} – {m['end']:%b %Y}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Final value", f"{CUR}{m['final']:,.0f}")
+    k2.metric("Total growth", f"{m['net_gain_pct'] * 100:+,.1f}%",
+              help="Final value compared with everything you invested: "
+                   "final ÷ invested − 1.")
+    if m["cagr"] is not None:
+        k3.metric("CAGR", f"{m['cagr'] * 100:,.2f}%",
+                  help="Average yearly growth of a single lump sum.")
+    else:
+        k3.metric("IRR", f"{m['irr'] * 100:,.2f}%" if m["irr"] is not None else "—",
+                  help="Average yearly return, taking the timing of each "
+                       "contribution into account.")
+    k4.metric("Invested", f"{CUR}{m['invested']:,.0f}")
 
 fig_eq = go.Figure()
 for r in runs:
@@ -644,7 +901,7 @@ for r in runs:
         "Invested": f"{CUR}{m['invested']:,.0f}",
         "Final value": f"{CUR}{m['final']:,.0f}",
         "Net gain": f"{CUR}{m['net_gain']:,.0f}",
-        "Net gain %": f"{m['net_gain_pct']*100:,.1f}%",
+        "Total growth": f"{m['net_gain_pct']*100:,.1f}%",
         "CAGR": f"{m['cagr']*100:,.2f}%" if m["cagr"] is not None else "—",
         "IRR": f"{m['irr']*100:,.2f}%" if m["irr"] is not None else "—",
         "Max DD": f"{m['max_dd']*100:,.1f}%",
@@ -660,7 +917,7 @@ st.markdown(
 - **Invested** — total money you put in (initial + all contributions).
 - **Final value** — what your portfolio is worth at the end.
 - **Net gain** — final value minus what you invested. Your profit in money terms.
-- **Net gain %** — the same profit, expressed as a percentage of what you invested.
+- **Total growth** — the same profit, expressed as a percentage of what you invested.
 - **CAGR** — *Compound Annual Growth Rate*. The average yearly growth rate,
   assuming a single initial investment with no extra contributions. Shown only
   for pure lump sum.
