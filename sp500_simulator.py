@@ -210,7 +210,7 @@ def to_timestamp(x):
 
 
 if ss.get("win_len") not in WINDOW_OPTIONS:
-    ss.win_len = "10 years" if "10 years" in PRESETS else "Full history"
+    ss.win_len = "20 years" if "20 years" in PRESETS else "Full history"
 if ss.get("win_start") not in MONTHS or ss.get("win_end") not in MONTHS:
     _L = preset_months(ss.win_len) or N_MONTHS
     ss.win_start, ss.win_end = MONTHS[N_MONTHS - _L], MONTHS[-1]
@@ -341,6 +341,9 @@ WIN_START = pd.Period(ss.win_start, "M").start_time
 WIN_END = pd.Period(ss.win_end, "M").end_time.normalize()
 
 in_win = df.iloc[si: ei + 1]
+# Index growth is measured from the close of the month before the window
+# (when available), matching how the scenarios invest.
+base_win = df.iloc[max(si - 1, 0): ei + 1]
 fig_hist = go.Figure()
 fig_hist.add_trace(go.Scatter(
     x=df["date"], y=df[VALUE_COL], name=IDX["name"],
@@ -353,7 +356,7 @@ fig_hist.add_trace(go.Scatter(
     hovertemplate="%{x|%b %Y}: %{y:,.2f}<extra></extra>",
 ))
 fig_hist.add_trace(go.Scatter(
-    x=in_win["date"], y=in_win[VALUE_COL], name="Selected window",
+    x=base_win["date"], y=base_win[VALUE_COL], name="Selected window",
     mode="lines", line=dict(color="#1f77b4", width=2.5), hoverinfo="skip",
 ))
 fig_hist.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
@@ -379,8 +382,8 @@ st.plotly_chart(
     config={"displaylogo": False},
 )
 
-_v0, _v1 = in_win[VALUE_COL].iloc[0], in_win[VALUE_COL].iloc[-1]
-_wyears = (in_win["date"].iloc[-1] - in_win["date"].iloc[0]).days / 365.25
+_v0, _v1 = base_win[VALUE_COL].iloc[0], base_win[VALUE_COL].iloc[-1]
+_wyears = (base_win["date"].iloc[-1] - base_win["date"].iloc[0]).days / 365.25
 _wgrowth = _v1 / _v0 - 1
 _wcagr = (_v1 / _v0) ** (1 / _wyears) - 1 if _wyears > 0 else None
 st.markdown(f"**Selected window:** {month_label(ss.win_start)} – "
@@ -486,6 +489,13 @@ def simulate(df, start_date, years, initial, contribution, escalation,
     if window.empty:
         return None, None
 
+    # Money is invested at the close of the month *before* the start month
+    # (when that month exists in the data), so the first month's return is
+    # included and an N-year window covers exactly N years.
+    prev = df[df["date"] < start_date]
+    has_base = not prev.empty and pd.notna(window[ret_col].iloc[0])
+    base_date = prev["date"].iloc[-1] if has_base else window["date"].iloc[0]
+
     portfolio = 0.0
     invested = 0.0
     peak = 0.0
@@ -531,7 +541,19 @@ def simulate(df, start_date, years, initial, contribution, escalation,
         # sees the real timing of every contribution.
         cashflows.append(-contrib)
 
-        if i > 0:
+        if i == 0 and has_base:
+            # Starting point: the first contribution at the previous close.
+            peak = portfolio
+            rows.append({
+                "date": base_date,
+                "contribution": contrib,
+                "portfolio": portfolio,
+                "invested": invested,
+                "drawdown": 0.0,
+            })
+            contrib = 0.0  # already recorded on the starting row
+
+        if i > 0 or has_base:
             r = row[ret_col]
             if pd.notna(r):
                 portfolio *= (1 + r)
@@ -548,7 +570,10 @@ def simulate(df, start_date, years, initial, contribution, escalation,
         })
 
     result = pd.DataFrame(rows)
-    cashflows[-1] += result["portfolio"].iloc[-1]
+    if has_base:
+        cashflows.append(result["portfolio"].iloc[-1])  # end of the last month
+    else:
+        cashflows[-1] += result["portfolio"].iloc[-1]
 
     final_value = result["portfolio"].iloc[-1]
     net_gain = final_value - invested
@@ -568,7 +593,7 @@ def simulate(df, start_date, years, initial, contribution, escalation,
     max_dd = result["drawdown"].min()
 
     metrics = {
-        "start": result["date"].iloc[0],
+        "start": start_date,
         "end": result["date"].iloc[-1],
         "years": years_actual,
         "invested": invested,
@@ -623,14 +648,45 @@ FREQ_HELP = (
     "**Monthly** — once a month."
 )
 
+def _fill_type_defaults(idx):
+    """When a scenario's Type changes, load that type's amounts into the
+    inputs (recent Streamlit versions keep a keyed input's old value even
+    when its default changes)."""
+    kind = st.session_state[f"type_{idx}"]
+    if kind == "Custom":
+        return
+    d = scenario_defaults(kind)
+    st.session_state[f"initial_{idx}"] = float(d["initial"])
+    st.session_state[f"contrib_{idx}"] = float(d["contribution"])
+    st.session_state[f"esc_{idx}"] = float(d["escalation"]) * 100
+    st.session_state[f"freq_{idx}"] = d["frequency"]
+
+
+def _remove_scenario(idx):
+    """Remove a scenario and shift the following scenarios' inputs down one
+    slot (runs as a callback, before the widgets are drawn)."""
+    n = len(st.session_state.scenarios)
+    for pre in ("type_", "initial_", "contrib_", "esc_", "freq_",
+                "usewin_", "start_str_", "years_"):
+        for j in range(idx, n - 1):
+            if f"{pre}{j + 1}" in st.session_state:
+                st.session_state[f"{pre}{j}"] = st.session_state[f"{pre}{j + 1}"]
+            else:
+                st.session_state.pop(f"{pre}{j}", None)
+        st.session_state.pop(f"{pre}{n - 1}", None)
+    st.session_state.scenarios.pop(idx)
+
+
 for idx, sc in enumerate(st.session_state.scenarios):
     with st.sidebar.expander(f"Scenario {idx+1}: {sc['name']}", expanded=(idx == 0)):
+        st.session_state.setdefault(f"type_{idx}", sc["type"])
         kind = st.selectbox(
             "Type",
             options=["Lump sum", "DCA", "Escalated DCA", "Custom"],
-            index=["Lump sum", "DCA", "Escalated DCA", "Custom"].index(sc["type"]),
             key=f"type_{idx}",
             help=TYPE_HELP,
+            on_change=_fill_type_defaults,
+            args=(idx,),
         )
 
         defaults = scenario_defaults(kind) if kind != "Custom" else dict(
@@ -639,10 +695,14 @@ for idx, sc in enumerate(st.session_state.scenarios):
             escalation=sc.get("escalation", 0.02),
             frequency=sc.get("frequency", "Yearly"),
         )
+        st.session_state.setdefault(f"initial_{idx}", float(defaults["initial"]))
+        st.session_state.setdefault(f"contrib_{idx}", float(defaults["contribution"]))
+        st.session_state.setdefault(f"esc_{idx}", float(defaults["escalation"]) * 100)
+        st.session_state.setdefault(f"freq_{idx}", defaults["frequency"])
 
+        st.session_state.setdefault(f"usewin_{idx}", sc.get("use_window", True))
         use_window = st.checkbox(
             "Use the time window from the chart",
-            value=sc.get("use_window", True),
             key=f"usewin_{idx}",
             help="Untick to give this scenario its own start date and duration.",
         )
@@ -654,10 +714,13 @@ for idx, sc in enumerate(st.session_state.scenarios):
             start_date_parsed = WIN_START.date()
             years = sc.get("years", 10)
         else:
+            st.session_state.setdefault(
+                f"start_str_{idx}",
+                default_start.strftime("%Y-%m-%d")
+                if isinstance(default_start, date) else str(default_start),
+            )
             start_str = st.text_input(
                 "Start date (YYYY-MM-DD)",
-                value=default_start.strftime("%Y-%m-%d")
-                if isinstance(default_start, date) else str(default_start),
                 key=f"start_str_{idx}",
                 help=f"Any date between {MIN_DATE.date()} and {MAX_DATE.date()}. "
                      "The simulation starts from the first day of that month.",
@@ -675,37 +738,31 @@ for idx, sc in enumerate(st.session_state.scenarios):
                 st.warning(f"Scenario {idx+1}: start after {MAX_DATE.date()} — clamped.")
                 start_date_parsed = MAX_DATE.date()
 
+            st.session_state.setdefault(f"years_{idx}", int(sc.get("years", 10)))
             years = st.number_input(
                 "Duration (years)",
                 min_value=1, max_value=100,
-                value=sc.get("years", 10),
                 key=f"years_{idx}",
             )
         initial = st.number_input(
             f"Initial capital ({CUR})",
             min_value=0.0, step=1000.0,
-            value=float(defaults["initial"]),
             key=f"initial_{idx}",
         )
         contribution = st.number_input(
             f"Recurring contribution ({CUR})",
             min_value=0.0, step=500.0,
-            value=float(defaults["contribution"]),
             key=f"contrib_{idx}",
         )
         frequency = st.selectbox(
             "Contribution frequency",
             options=["Yearly", "Quarterly", "Monthly"],
-            index=["Yearly", "Quarterly", "Monthly"].index(
-                sc.get("frequency", "Yearly")
-            ),
             key=f"freq_{idx}",
             help=FREQ_HELP,
         )
         escalation = st.number_input(
             "Contribution escalation (% per year)",
             min_value=0.0, max_value=20.0, step=0.5,
-            value=float(defaults["escalation"]) * 100,
             key=f"esc_{idx}",
         ) / 100.0
 
@@ -721,9 +778,8 @@ for idx, sc in enumerate(st.session_state.scenarios):
         })
 
         if len(st.session_state.scenarios) > 1:
-            if st.button(f"🗑️ Remove scenario {idx+1}", key=f"remove_{idx}"):
-                st.session_state.scenarios.pop(idx)
-                st.rerun()
+            st.button(f"🗑️ Remove scenario {idx+1}", key=f"remove_{idx}",
+                      on_click=_remove_scenario, args=(idx,))
 
 
 if len(st.session_state.scenarios) < 3:
@@ -788,25 +844,28 @@ def add_years_since_start(result):
 
 
 def compute_yearly_returns(result):
-    """Compute the calendar-year return of the portfolio for each year.
+    """Calendar-year change of the portfolio value.
 
-    For each calendar year present in the simulation, take the portfolio value
-    at the first month and the last month of that year, and compute the return
-    over that span. Contributions during the year are NOT subtracted — so this
-    is a 'gross' year-on-year view of the portfolio's trajectory.
+    Each year runs from the previous year's last value (or the starting value)
+    to that year's last value. Contributions made during the year are NOT
+    subtracted, so this is a 'gross' year-on-year view of the portfolio.
+    A year that only holds the starting point is skipped.
     """
     res = result.copy()
     res["year"] = res["date"].dt.year
 
     yearly = []
+    prev_val = None
     for year, grp in res.groupby("year"):
-        first_val = grp["portfolio"].iloc[0]
         last_val = grp["portfolio"].iloc[-1]
-        if first_val > 0:
-            ret = (last_val / first_val) - 1
-        else:
-            ret = 0.0
+        if prev_val is None:
+            if len(grp) == 1 and len(res) > 1:
+                prev_val = last_val  # only the starting point lies in this year
+                continue
+            prev_val = grp["portfolio"].iloc[0]
+        ret = (last_val / prev_val) - 1 if prev_val > 0 else 0.0
         yearly.append({"year": year, "return": ret})
+        prev_val = last_val
     return pd.DataFrame(yearly)
 
 
