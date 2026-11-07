@@ -1,19 +1,80 @@
+import json
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import date
 
+from indices import INDICES, CURRENCY_SYMBOL
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="S&P 500 Backtester",
+    page_title="Index Backtester",
     page_icon="📈",
     layout="wide",
 )
 
-st.title("📈 S&P 500 Backtester")
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+DATA_FILE = Path(__file__).parent / "data" / "index_prices.csv"
+META_FILE = Path(__file__).parent / "data" / "metadata.json"
+
+
+@st.cache_data(ttl=3600)
+def load_all(path, mtime):
+    """Load the long-format CSV (index, date, nominal, inflation_adjusted).
+    `mtime` is only part of the cache key, so a new daily file is picked up."""
+    df = pd.read_csv(path, parse_dates=["date"])
+    return df.sort_values(["index", "date"]).reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600)
+def load_meta(path, mtime):
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return {}
+
+
+ALL = load_all(str(DATA_FILE), DATA_FILE.stat().st_mtime)
+META = load_meta(str(META_FILE), META_FILE.stat().st_mtime if META_FILE.exists() else 0)
+AVAILABLE = [k for k in INDICES if (ALL["index"] == k).any()]
+
+
+def index_frame(index_id, mode):
+    """Monthly series for one index, restricted to rows that have a value
+    for the chosen mode, with monthly returns."""
+    col = "nominal" if mode == "Nominal" else "inflation_adjusted"
+    d = ALL[ALL["index"] == index_id].dropna(subset=[col]).copy()
+    d = d.reset_index(drop=True)
+    d["ret_nom"] = d["nominal"].pct_change()
+    d["ret_real"] = d["inflation_adjusted"].pct_change()
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Sidebar — index and global settings
+# ---------------------------------------------------------------------------
+st.sidebar.header("Index")
+
+index_id = st.sidebar.selectbox(
+    "Choose an index",
+    options=AVAILABLE,
+    index=AVAILABLE.index("sp500") if "sp500" in AVAILABLE else 0,
+    format_func=lambda k: INDICES[k]["name"],
+    help="\n\n".join(f"**{INDICES[k]['name']}** — {INDICES[k]['short']}"
+                     for k in AVAILABLE),
+)
+IDX = INDICES[index_id]
+IDX_META = META.get("indices", {}).get(index_id, {})
+CUR = CURRENCY_SYMBOL.get(IDX["currency"], "")
+
+st.title(f"📈 {IDX['name']} Backtester")
 
 # ---------------------------------------------------------------------------
 # Collapsible instructions
@@ -23,14 +84,17 @@ with st.expander("ℹ️ What this app does — click to expand", expanded=False
         """
 **What this app does**
 
-This tool lets you simulate how a hypothetical investment in the S&P 500 would
-have performed if you had started at any month between **31 December 1927** and
-**14 October 2026**. You can model a single lump sum, regular contributions,
-or a mix of both — and compare up to three scenarios side by side.
+This tool lets you simulate how a hypothetical investment in a stock market
+index would have performed if you had started at any month in its history —
+from the S&P 500 (back to 1927) to the Nikkei 225, European and emerging-market
+indices. You can model a single lump sum, regular contributions, or a mix of
+both — and compare up to three scenarios side by side. The data is refreshed
+automatically every day.
 
 **How to use it**
 
-1. In the sidebar, choose whether you want results in *Nominal* or
+1. In the sidebar, **choose an index** — a short description of each is shown
+   on the page — and whether you want results in *Nominal* or
    *Inflation-adjusted* terms.
 2. Set up one or more scenarios:
    - **Lump sum** — invest once at the start, nothing after.
@@ -58,36 +122,12 @@ or a mix of both — and compare up to three scenarios side by side.
 
 **Important**
 
-All results are **price return only and exclude dividends**. The data range
-covers **31 December 1927 to 14 October 2026**.
+All results are **price return only and exclude dividends**. Returns are in
+each index's own currency (e.g. yen for the Nikkei 225, euros for the Euro
+Stoxx 50); inflation adjustment uses the inflation of that currency area.
+Each index has its own data range, shown in the index description.
         """
     )
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-FILE = "s&p500_19271231_20261014.csv"
-
-
-@st.cache_data
-def load_index(path):
-    df = pd.read_csv(path)
-    df.columns = [c.strip() for c in df.columns]
-
-    df["date"] = pd.to_datetime(df["date"], format="%m/%d/%Y")
-    df = df.sort_values("date").reset_index(drop=True)
-
-    df = df.dropna(subset=["inflation_adjusted", "nominal"]).reset_index(drop=True)
-
-    df["ret_real"] = df["inflation_adjusted"].pct_change()
-    df["ret_nom"] = df["nominal"].pct_change()
-
-    return df
-
-
-df = load_index(FILE)
-MIN_DATE = df["date"].min()
-MAX_DATE = df["date"].max()
 
 # ---------------------------------------------------------------------------
 # Sidebar — global settings
@@ -99,12 +139,59 @@ value_mode = st.sidebar.radio(
     options=["Nominal", "Inflation-adjusted"],
     index=0,
     help=(
-        "**Nominal** — actual euro/dollar amounts of the day.\n\n"
+        "**Nominal** — actual currency amounts of the day.\n\n"
         "**Inflation-adjusted** — expresses past values in start-of-period "
         "purchasing power, i.e. it assumes inflation didn't exist, so you can "
-        "compare returns across different eras in 'real' terms."
+        "compare returns across different eras in 'real' terms. Uses the "
+        "inflation of the index's currency area."
     ),
 )
+
+df = index_frame(index_id, value_mode)
+if len(df) < 2:
+    st.warning(
+        f"No {value_mode.lower()} data is available for {IDX['name']} at the "
+        "moment. Please choose *Nominal* or another index."
+    )
+    st.stop()
+MIN_DATE = df["date"].min()
+MAX_DATE = df["date"].max()
+
+# ---------------------------------------------------------------------------
+# About the selected index
+# ---------------------------------------------------------------------------
+with st.container(border=True):
+    st.markdown(f"#### {IDX['name']}")
+    st.markdown(IDX["description"])
+    facts = [
+        f"**Region:** {IDX['region']}",
+        f"**Currency:** {IDX['currency']}",
+        f"**Data:** {MIN_DATE:%d %b %Y} – {MAX_DATE:%d %b %Y}",
+        f"**Source:** Yahoo Finance `{IDX_META.get('ticker', IDX['tickers'][0])}`",
+    ]
+    if value_mode == "Inflation-adjusted" and IDX_META.get("cpi"):
+        facts.append(
+            f"**Inflation:** {IDX_META['cpi']} (published up to "
+            f"{IDX_META.get('cpi_last_month', '?')}; later months use the last "
+            "available figure)"
+        )
+    st.caption("  ·  ".join(facts))
+
+with st.expander("📚 Compare all available indices", expanded=False):
+    guide = []
+    for k in AVAILABLE:
+        m = META.get("indices", {}).get(k, {})
+        guide.append({
+            "Index": INDICES[k]["name"],
+            "What it is": INDICES[k]["short"],
+            "Region": INDICES[k]["region"],
+            "Currency": INDICES[k]["currency"],
+            "Data from": m.get("first_date", "—"),
+            "Source": m.get("ticker", INDICES[k]["tickers"][0]),
+        })
+    st.dataframe(pd.DataFrame(guide), width="stretch", hide_index=True)
+    if META.get("updated_utc"):
+        st.caption(f"Data last updated: {META['updated_utc']}.")
 
 log_scale = st.sidebar.radio(
     "Y-axis scale (charts)",
@@ -119,11 +206,11 @@ def irr_monthly(cashflows, tol=1e-7, max_iter=200):
     def npv(rate):
         return sum(cf / (1 + rate) ** t for t, cf in enumerate(cashflows))
 
-    lo, hi = -0.99, 1.0
-    for _ in range(20):
-        if npv(lo) * npv(hi) < 0:
-            break
-        hi *= 2
+    # Monthly rates between -20% and +20% (about -93% to +790% a year) keep
+    # (1 + rate) ** t finite even over 100 years of monthly periods.
+    lo, hi = -0.2, 0.2
+    if npv(lo) * npv(hi) > 0:
+        return None
 
     for _ in range(max_iter):
         mid = (lo + hi) / 2
@@ -139,7 +226,7 @@ def irr_monthly(cashflows, tol=1e-7, max_iter=200):
 
 def irr_annual(cashflows):
     m = irr_monthly(cashflows)
-    return (1 + m) ** 12 - 1
+    return None if m is None else (1 + m) ** 12 - 1
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +238,8 @@ def simulate(df, start_date, years, initial, contribution, escalation,
 
     start_date = pd.Timestamp(start_date).replace(day=1)
 
-    end_target = start_date + pd.DateOffset(years=int(years)) - pd.DateOffset(months=1)
+    # Last day of the final month, so that month's end-of-month row is included.
+    end_target = start_date + pd.DateOffset(years=int(years)) - pd.DateOffset(days=1)
     end_date = min(end_target, MAX_DATE)
 
     window = df[(df["date"] >= start_date) & (df["date"] <= end_date)].reset_index(drop=True)
@@ -199,8 +287,9 @@ def simulate(df, start_date, years, initial, contribution, escalation,
         portfolio += contrib
         invested += contrib
 
-        if contrib > 0:
-            cashflows.append(-contrib)
+        # One cash flow per month (0 when nothing is invested), so the IRR
+        # sees the real timing of every contribution.
+        cashflows.append(-contrib)
 
         if i > 0:
             r = row[ret_col]
@@ -219,7 +308,7 @@ def simulate(df, start_date, years, initial, contribution, escalation,
         })
 
     result = pd.DataFrame(rows)
-    cashflows.append(result["portfolio"].iloc[-1])
+    cashflows[-1] += result["portfolio"].iloc[-1]
 
     final_value = result["portfolio"].iloc[-1]
     net_gain = final_value - invested
@@ -311,7 +400,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
             frequency=sc.get("frequency", "Yearly"),
         )
 
-        default_start = sc.get("start_date", date(1999, 1, 1))
+        default_start = sc.get("start_date", max(date(1999, 1, 1), MIN_DATE.date()))
         start_str = st.text_input(
             "Start date (YYYY-MM-DD)",
             value=default_start.strftime("%Y-%m-%d")
@@ -340,13 +429,13 @@ for idx, sc in enumerate(st.session_state.scenarios):
             key=f"years_{idx}",
         )
         initial = st.number_input(
-            "Initial capital (€)",
+            f"Initial capital ({CUR})",
             min_value=0.0, step=1000.0,
             value=float(defaults["initial"]),
             key=f"initial_{idx}",
         )
         contribution = st.number_input(
-            "Recurring contribution (€)",
+            f"Recurring contribution ({CUR})",
             min_value=0.0, step=500.0,
             value=float(defaults["contribution"]),
             key=f"contrib_{idx}",
@@ -415,7 +504,7 @@ for idx, sc in enumerate(st.session_state.scenarios):
         continue
 
     requested_end = pd.Timestamp(sc["start_date"]).replace(day=1) + \
-        pd.DateOffset(years=sc["years"]) - pd.DateOffset(months=1)
+        pd.DateOffset(years=sc["years"]) - pd.DateOffset(days=1)
     if requested_end > MAX_DATE:
         st.info(
             f"Scenario {idx+1}: requested end {requested_end:%b %Y} "
@@ -472,7 +561,7 @@ def compute_yearly_returns(result):
 st.subheader("Return")
 
 final_summary = "  |  ".join(
-    f"**{r['name']}** — final: €{r['metrics']['final']:,.0f}"
+    f"**{r['name']}** — final: {CUR}{r['metrics']['final']:,.0f}"
     + (
         f", CAGR: {r['metrics']['cagr']*100:,.2f}%"
         if r["metrics"]["cagr"] is not None
@@ -501,7 +590,7 @@ fig_eq.update_layout(
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
-st.plotly_chart(fig_eq, use_container_width=True)
+st.plotly_chart(fig_eq, width="stretch")
 
 # ---------------------------------------------------------------------------
 # YEARLY RETURNS bar chart
@@ -537,7 +626,7 @@ fig_yr.update_layout(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
 fig_yr.add_hline(y=0, line_width=1, line_color="black")
-st.plotly_chart(fig_yr, use_container_width=True)
+st.plotly_chart(fig_yr, width="stretch")
 
 # ---------------------------------------------------------------------------
 # Results table
@@ -552,9 +641,9 @@ for r in runs:
         "Start": m["start"].strftime("%b %Y"),
         "End": m["end"].strftime("%b %Y"),
         "Years": round(m["years"], 2),
-        "Invested": f"€{m['invested']:,.0f}",
-        "Final value": f"€{m['final']:,.0f}",
-        "Net gain": f"€{m['net_gain']:,.0f}",
+        "Invested": f"{CUR}{m['invested']:,.0f}",
+        "Final value": f"{CUR}{m['final']:,.0f}",
+        "Net gain": f"{CUR}{m['net_gain']:,.0f}",
         "Net gain %": f"{m['net_gain_pct']*100:,.1f}%",
         "CAGR": f"{m['cagr']*100:,.2f}%" if m["cagr"] is not None else "—",
         "IRR": f"{m['irr']*100:,.2f}%" if m["irr"] is not None else "—",
@@ -562,7 +651,7 @@ for r in runs:
     })
 
 summary_df = pd.DataFrame(summary_rows)
-st.dataframe(summary_df, use_container_width=True, hide_index=True)
+st.dataframe(summary_df, width="stretch", hide_index=True)
 
 st.markdown(
     """
@@ -570,7 +659,7 @@ st.markdown(
 
 - **Invested** — total money you put in (initial + all contributions).
 - **Final value** — what your portfolio is worth at the end.
-- **Net gain** — final value minus what you invested. Your profit in euros.
+- **Net gain** — final value minus what you invested. Your profit in money terms.
 - **Net gain %** — the same profit, expressed as a percentage of what you invested.
 - **CAGR** — *Compound Annual Growth Rate*. The average yearly growth rate,
   assuming a single initial investment with no extra contributions. Shown only
@@ -587,7 +676,8 @@ mode_label = (
     if value_mode == "Nominal"
     else "inflation-adjusted terms (start-of-period purchasing power)"
 )
-st.caption(f"All figures in **{mode_label}**. Price return only, excludes dividends.")
+st.caption(f"{IDX['name']} — all figures in **{IDX['currency']}**, **{mode_label}**. "
+           "Price return only, excludes dividends.")
 
 # ---------------------------------------------------------------------------
 # CSV export
@@ -602,6 +692,7 @@ for r in runs:
         f"# Scenario: {r['name']}\n"
         f"# Start: {r['metrics']['start']:%Y-%m-%d}\n"
         f"# End: {r['metrics']['end']:%Y-%m-%d}\n"
+        f"# Index: {IDX['name']} ({IDX_META.get('ticker', '')}, {IDX['currency']})\n"
         f"# Value mode: {value_mode}\n"
         f"# Price return only, excludes dividends\n"
         f"# Initial: {r['params']['initial']}\n"
@@ -612,7 +703,7 @@ for r in runs:
     st.download_button(
         label=f"⬇️ Download CSV — {r['name']}",
         data=csv.encode("utf-8"),
-        file_name=f"sp500_{r['name'].replace(' ', '_').replace('(', '').replace(')', '')}.csv",
+        file_name=f"{index_id}_{r['name'].replace(' ', '_').replace('(', '').replace(')', '')}.csv",
         mime="text/csv",
         key=f"dl_{r['name']}",
     )
