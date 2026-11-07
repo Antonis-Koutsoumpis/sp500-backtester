@@ -37,21 +37,27 @@ OUT_CSV = DATA_DIR / "index_prices.csv"
 META_JSON = DATA_DIR / "metadata.json"
 SP500_SEED = ROOT / "s&p500_19271231_20261014.csv"
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (index-backtester data updater)"}
+HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"),
+    "Accept": "text/csv,application/json,text/plain,*/*",
+}
 
 # CPI sources per currency area, in order of preference. All candidates that
 # download successfully are chain-linked, so a long but discontinued series can
 # supply history while a current one supplies the latest months.
+# Sources: BLS (via DBnomics), BIS long CPI series, Eurostat, UK ONS, FRED.
+# FRED often times out from cloud runners, so it is only one option among
+# several and gets a short timeout.
 CPI_SOURCES = {
-    "US": [("fred", "CPIAUCNS"), ("fred", "CPIAUCSL")],
-    "EA": [
-        ("fred", "CP0000EZ19M086NEST"),
-        ("eurostat", "M.I25.CP00.EA"),
-        ("eurostat", "M.I15.CP00.EA"),
-        ("eurostat", "M.I15.CP00.EA20"),
-    ],
-    "UK": [("ons", "d7bt/mm23"), ("fred", "GBRCPIALLMINMEI")],
-    "JP": [("fred", "JPNCPIALLMINMEI"), ("fred", "CPALTT01JPM661N")],
+    "US": [("dbnomics", "BLS/cu/CUUR0000SA0"), ("bis", "US"),
+           ("fred", "CPIAUCNS")],
+    "EA": [("eurostat", "M.I15.CP00.EA"), ("eurostat", "M.I25.CP00.EA"),
+           ("dbnomics", "Eurostat/prc_hicp_midx/M.I15.CP00.EA"), ("bis", "XM"),
+           ("fred", "CP0000EZ19M086NEST")],
+    "UK": [("ons", "d7bt/mm23"), ("bis", "GB"), ("fred", "GBRCPIALLMINMEI")],
+    "JP": [("bis", "JP"), ("dbnomics", "OECD/DSD_PRICES@DF_PRICES_ALL/JPN.M.N.CPI.IX._T.N._Z"),
+           ("fred", "JPNCPIALLMINMEI")],
 }
 
 
@@ -59,11 +65,11 @@ def log(msg):
     print(msg, flush=True)
 
 
-def http_get(url, tries=3):
+def http_get(url, tries=2, timeout=30):
     last = None
     for i in range(tries):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=60)
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
             r.raise_for_status()
             return r.text
         except Exception as e:  # noqa: BLE001
@@ -76,7 +82,8 @@ def http_get(url, tries=3):
 # CPI
 # ---------------------------------------------------------------------------
 def cpi_fred(series_id):
-    txt = http_get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}")
+    txt = http_get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}",
+                   tries=1, timeout=20)
     df = pd.read_csv(io.StringIO(txt))
     date_col = df.columns[0]
     s = pd.to_numeric(df[series_id], errors="coerce")
@@ -93,6 +100,39 @@ def cpi_eurostat(key):
     s = pd.to_numeric(df["OBS_VALUE"], errors="coerce")
     s.index = pd.PeriodIndex(df["TIME_PERIOD"], freq="M")
     return s.dropna().sort_index()
+
+
+def cpi_dbnomics(series_code):
+    url = (f"https://api.db.nomics.world/v22/series/{series_code}"
+           "?observations=1&format=json")
+    doc = json.loads(http_get(url, timeout=60))["series"]["docs"][0]
+    s = pd.Series(pd.to_numeric(pd.Series(doc["value"]), errors="coerce").to_numpy(),
+                  index=pd.PeriodIndex(doc["period"], freq="M"))
+    return s.dropna().sort_index()
+
+
+def _sdmx_csv_series(txt):
+    df = pd.read_csv(io.StringIO(txt))
+    cols = {c.upper().split(":")[0]: c for c in df.columns}
+    s = pd.to_numeric(df[cols["OBS_VALUE"]], errors="coerce")
+    s.index = pd.PeriodIndex(df[cols["TIME_PERIOD"]].astype(str), freq="M")
+    return s.dropna().sort_index()
+
+
+def cpi_bis(country):
+    """BIS long consumer price series (index, 2010 = 100)."""
+    urls = [
+        f"https://stats.bis.org/api/v1/data/WS_LONG_CPI/M.{country}.628/all?format=csv",
+        "https://stats.bis.org/api/v2/data/dataflow/BIS/WS_LONG_CPI/1.0/"
+        f"M.{country}.628?format=csv",
+    ]
+    last = None
+    for url in urls:
+        try:
+            return _sdmx_csv_series(http_get(url, timeout=60))
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise last
 
 
 def cpi_ons(path):
@@ -131,7 +171,8 @@ def chain_link(series_list):
 
 
 def load_cpi(area):
-    fetchers = {"fred": cpi_fred, "eurostat": cpi_eurostat, "ons": cpi_ons}
+    fetchers = {"fred": cpi_fred, "eurostat": cpi_eurostat, "ons": cpi_ons,
+                "dbnomics": cpi_dbnomics, "bis": cpi_bis}
     got, used = [], []
     for kind, key in CPI_SOURCES[area]:
         try:
@@ -187,18 +228,20 @@ def load_sp500_seed():
 
 
 def build_index(idx_id, cfg, cpi_cache):
+    # Use the candidate ticker with the longest history.
     daily, ticker_used = None, None
     for t in cfg["tickers"]:
         try:
-            daily = fetch_daily_close(t)
-            ticker_used = t
-            log(f"  {t}: {len(daily)} days, {daily.index.min().date()} -> "
-                f"{daily.index.max().date()}")
-            break
+            s = fetch_daily_close(t)
+            log(f"  {t}: {len(s)} days, {s.index.min().date()} -> "
+                f"{s.index.max().date()}")
+            if daily is None or s.index.min() < daily.index.min():
+                daily, ticker_used = s, t
         except Exception as e:  # noqa: BLE001
             log(f"  {t}: failed ({e})")
     if daily is None:
         return None, None
+    log(f"  using {ticker_used}")
 
     monthly = to_monthly(daily)
 
@@ -216,8 +259,17 @@ def build_index(idx_id, cfg, cpi_cache):
     if area not in cpi_cache:
         cpi_cache[area] = load_cpi(area)
     cpi, cpi_used = cpi_cache[area]
+    monthly.insert(0, "index", idx_id)
     if cpi is None:
-        return None, None
+        log("  no CPI available -> nominal only")
+        monthly["inflation_adjusted"] = float("nan")
+        return monthly, {
+            "ticker": ticker_used,
+            "first_date": str(monthly["date"].min().date()),
+            "last_date": str(monthly["date"].max().date()),
+            "first_real_date": None, "cpi": CPI_NAMES[area],
+            "cpi_sources": [], "cpi_last_month": None,
+        }
 
     months = monthly["date"].dt.to_period("M")
     full_range = pd.period_range(min(cpi.index.min(), months.min()),
@@ -227,7 +279,6 @@ def build_index(idx_id, cfg, cpi_cache):
     ref = cpi_full[months.max()]
     monthly["inflation_adjusted"] = monthly["nominal"] * ref / cpi_at
 
-    monthly.insert(0, "index", idx_id)
     meta = {
         "ticker": ticker_used,
         "first_date": str(monthly["date"].min().date()),
