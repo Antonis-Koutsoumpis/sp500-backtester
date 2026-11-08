@@ -160,6 +160,35 @@ log_scale = st.sidebar.radio(
          "useful for long histories.",
 )
 
+trend_type = st.sidebar.selectbox(
+    "Trend line (historical chart)",
+    options=["None", "Linear", "Polynomial", "Logarithmic", "Exponential"],
+    index=0,
+    key="trend_type",
+    help=(
+        "Fits a trend line through the index on the historical chart.\n\n"
+        "**Linear** — a straight line: the index rises by the same amount "
+        "every year.\n\n"
+        "**Polynomial** — a curve that can bend up to 4 times (degree 2–5); "
+        "follows the data closely but says little about the future.\n\n"
+        "**Logarithmic** — rises quickly at first, then flattens out.\n\n"
+        "**Exponential** — grows by the same *percentage* every year, the "
+        "classic model for long-run stock market growth (a straight line on "
+        "a log scale)."
+    ),
+)
+trend_degree = 2
+trend_scope = "Full history"
+if trend_type == "Polynomial":
+    trend_degree = st.sidebar.slider("Polynomial degree", 2, 5, 2, key="trend_degree")
+if trend_type != "None":
+    trend_scope = st.sidebar.radio(
+        "Fit the trend over",
+        options=["Full history", "Selected window"],
+        key="trend_scope",
+        horizontal=True,
+    )
+
 df = index_frame(index_id, value_mode)
 if len(df) < 2:
     st.warning(
@@ -362,6 +391,57 @@ fig_hist.add_trace(go.Scatter(
 ))
 fig_hist.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
                    opacity=0.12, line_width=0, layer="below")
+
+
+def fit_trend(dates, values, kind, degree=2):
+    """Fit a trend through (dates, values). Returns fitted values, a formula
+    and R² (computed on the index values themselves). t = years since the
+    first date of the fit."""
+    t = ((dates - dates.iloc[0]).dt.days / 365.25).to_numpy()
+    y = values.to_numpy(dtype=float)
+    if kind == "Linear":
+        b, a = np.polyfit(t, y, 1)
+        fitted = a + b * t
+        formula = f"y = {a:,.2f} + {b:,.2f}·t"
+    elif kind == "Polynomial":
+        poly = np.polynomial.Polynomial.fit(t, y, degree).convert()
+        fitted = poly(t)
+        terms = [f"{c:+,.4g}" + ("" if k == 0 else "·t" if k == 1 else f"·t^{k}")
+                 for k, c in enumerate(poly.coef)]
+        formula = "y = " + " ".join(terms).lstrip("+")
+    elif kind == "Logarithmic":
+        # t starts one month in, so ln(t) is defined at the first point
+        tl = t + 1 / 12
+        b, a = np.polyfit(np.log(tl), y, 1)
+        fitted = a + b * np.log(tl)
+        formula = f"y = {a:,.2f} + {b:,.2f}·ln(t + 1/12)"
+    else:  # Exponential: least squares on ln(y)
+        mask = y > 0
+        b, ln_a = np.polyfit(t[mask], np.log(y[mask]), 1)
+        a = np.exp(ln_a)
+        fitted = a * np.exp(b * t)
+        formula = (f"y = {a:,.2f}·e^({b:.4f}·t)  →  about "
+                   f"{(np.exp(b) - 1) * 100:,.2f}% a year")
+    ss_res = float(np.sum((y - fitted) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return fitted, formula, r2
+
+
+trend_info = None
+if trend_type != "None":
+    fit_df = df if trend_scope == "Full history" else base_win
+    if len(fit_df) > max(3, trend_degree + 1):
+        fitted, formula, r2 = fit_trend(fit_df["date"], fit_df[VALUE_COL],
+                                        trend_type, trend_degree)
+        name = (f"Polynomial trend (degree {trend_degree})"
+                if trend_type == "Polynomial" else f"{trend_type} trend")
+        fig_hist.add_trace(go.Scatter(
+            x=fit_df["date"], y=fitted, name=name, mode="lines",
+            line=dict(color="#d62728", width=2, dash="dash"),
+            hovertemplate=f"{name}: %{{y:,.2f}}<extra></extra>",
+        ))
+        trend_info = (name, formula, r2, fit_df["date"].iloc[0])
 fig_hist.update_layout(
     dragmode="select",
     selectdirection="h",
@@ -382,6 +462,14 @@ st.plotly_chart(
     width="stretch",
     config={"displaylogo": False},
 )
+
+if trend_info:
+    _name, _formula, _r2, _t0 = trend_info
+    st.caption(
+        f":red[**- - -**] **{_name}** "
+        f"({trend_scope.lower()}): `{_formula}`, with t = years since "
+        f"{_t0:%b %Y} · R² = {_r2:.3f} (1 = perfect fit)"
+    )
 
 _v0, _v1 = base_win[VALUE_COL].iloc[0], base_win[VALUE_COL].iloc[-1]
 _wyears = (base_win["date"].iloc[-1] - base_win["date"].iloc[0]).days / 365.25
