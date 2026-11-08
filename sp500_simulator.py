@@ -73,6 +73,7 @@ index_id = st.sidebar.selectbox(
 IDX = INDICES[index_id]
 IDX_META = META.get("indices", {}).get(index_id, {})
 CUR = CURRENCY_SYMBOL.get(IDX["currency"], "")
+CPI_LABEL = IDX_META.get("cpi") or "the inflation of the index's currency area"
 
 st.title(f"📈 {IDX['name']} Backtester")
 
@@ -789,6 +790,36 @@ if len(st.session_state.scenarios) < 3:
         )
         st.rerun()
 
+st.sidebar.subheader("Compare with")
+st.sidebar.caption("Uses the same deposits, on the same dates, as each scenario.")
+show_fixed = st.sidebar.checkbox(
+    "Fixed annual return",
+    key="cmp_fixed",
+    help=(
+        "What each scenario would be worth if the money grew by the same "
+        "percentage every year instead of following the index. Follows the "
+        "value mode: in *Inflation-adjusted* mode it is a return above "
+        "inflation."
+    ),
+)
+fixed_rate = st.sidebar.number_input(
+    "Annual return (%)",
+    min_value=-50.0, max_value=50.0, value=10.0, step=0.5,
+    key="cmp_rate",
+    disabled=not show_fixed,
+    help="Can be negative, e.g. −2 for money that shrinks 2% a year.",
+) / 100.0
+show_cash = st.sidebar.checkbox(
+    "Cash savings (0% interest)",
+    key="cmp_cash",
+    help=(
+        f"The same money kept as cash, earning no interest. Inflation "
+        f"({CPI_LABEL}) eats away its purchasing power. In *Inflation-adjusted* "
+        "mode the line shrinks; in *Nominal* mode it stays flat and the "
+        "purchasing power lost is shown below the numbers."
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Run simulations
@@ -832,6 +863,128 @@ for idx, sc in enumerate(st.session_state.scenarios):
 if not runs:
     st.stop()
 
+
+# ---------------------------------------------------------------------------
+# Comparisons: fixed annual return and cash savings
+# ---------------------------------------------------------------------------
+def deposit_dates(result):
+    """Date at which each row's contribution is invested: the starting row at
+    its own date, every later row at the previous close."""
+    d = result["date"].tolist()
+    return [d[0]] + d[:-1]
+
+
+def xirr(dates, flows):
+    """Annual rate r with sum(flow / (1 + r) ** years) = 0 (bisection)."""
+    t0 = dates[0]
+    yrs = np.array([(d - t0).days / 365.25 for d in dates])
+    cf = np.array(flows, dtype=float)
+
+    def npv(r):
+        return float(np.sum(cf / (1.0 + r) ** yrs))
+
+    lo, hi = -0.95, 2.0
+    try:
+        if npv(lo) * npv(hi) > 0:
+            return None
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if npv(lo) * npv(mid) <= 0:
+                hi = mid
+            else:
+                lo = mid
+        return round((lo + hi) / 2, 6) + 0.0  # avoid showing "-0.00%"
+    except (OverflowError, ZeroDivisionError, FloatingPointError):
+        return None
+
+
+def line_metrics(result, values, lump_sum):
+    """Invested / growth / CAGR or IRR / final / max drawdown for a value path
+    that receives the same contributions as `result`."""
+    invested = result["contribution"].sum()
+    final = float(values[-1])
+    years = (result["date"].iloc[-1] - result["date"].iloc[0]).days / 365.25
+    flows = (-result["contribution"]).tolist()
+    dates = deposit_dates(result)
+    flows.append(final)
+    dates.append(result["date"].iloc[-1])
+    v = np.asarray(values, dtype=float)
+    peak = np.maximum.accumulate(v)
+    dd = np.where(peak > 0, v / peak - 1, 0.0)
+    cagr = None
+    if lump_sum and invested > 0 and years > 0 and final > 0:
+        cagr = (final / invested) ** (1 / years) - 1
+    return {
+        "invested": invested,
+        "final": final,
+        "net_gain": final - invested,
+        "net_gain_pct": final / invested - 1 if invested > 0 else 0.0,
+        "cagr": cagr,
+        "irr": None if lump_sum else xirr(dates, flows),
+        "max_dd": float(dd.min()),
+    }
+
+
+def fixed_return_path(result, rate):
+    """Value if every deposit grew by `rate` per year (pro rata per day)."""
+    vals, v = [], 0.0
+    dates = result["date"].tolist()
+    for i, c in enumerate(result["contribution"]):
+        if i == 0:
+            v = c
+        else:
+            days = (dates[i] - dates[i - 1]).days
+            v = (v + c) * (1 + rate) ** (days / 365.25)
+        vals.append(v)
+    return vals
+
+
+INFLATION = df.set_index("date")
+# Monthly inflation of the index's currency area, implied by the ratio of the
+# nominal and the inflation-adjusted series: (1 + nominal) / (1 + real).
+MONTHLY_INFLATION = (1 + INFLATION["ret_nom"]) / (1 + INFLATION["ret_real"]) - 1
+
+
+def cash_real_path(result):
+    """Purchasing power of the deposits kept as cash (0% interest)."""
+    vals, v = [], 0.0
+    for i, (d, c) in enumerate(zip(result["date"], result["contribution"])):
+        if i == 0:
+            v = c
+        else:
+            infl = MONTHLY_INFLATION.get(d, np.nan)
+            v = (v + c) / (1 + (0.0 if pd.isna(infl) else infl))
+        vals.append(v)
+    return vals
+
+
+for r in runs:
+    res = r["result"]
+    sc = r["params"]
+    lump = sc["contribution"] == 0
+    # Use the same IRR method for the scenario as for its comparisons.
+    if not lump:
+        r["metrics"]["irr"] = line_metrics(res, res["portfolio"].tolist(), False)["irr"]
+    r["comparisons"] = []
+    if show_fixed:
+        vals = fixed_return_path(res, fixed_rate)
+        r["comparisons"].append({
+            "key": "fixed", "label": f"Fixed {fixed_rate * 100:+.1f}% a year",
+            "values": vals, "metrics": line_metrics(res, vals, lump),
+        })
+    if show_cash:
+        real_vals = cash_real_path(res)
+        if value_mode == "Nominal":
+            vals = res["contribution"].cumsum().tolist()
+        else:
+            vals = real_vals
+        m = line_metrics(res, vals, lump)
+        m["power_lost"] = (real_vals[-1] / m["invested"] - 1) if m["invested"] > 0 else 0.0
+        r["comparisons"].append({
+            "key": "cash", "label": "Cash, 0% interest",
+            "values": vals, "metrics": m,
+        })
+
 # ---------------------------------------------------------------------------
 # Chart helpers
 # ---------------------------------------------------------------------------
@@ -874,39 +1027,67 @@ def compute_yearly_returns(result):
 # ---------------------------------------------------------------------------
 st.subheader("Return")
 
-for r in runs:
-    m = r["metrics"]
-    st.markdown(f"**{r['name']}** · {m['start']:%b %Y} – {m['end']:%b %Y}")
+SCENARIO_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+
+
+def metric_row(m, cagr_help):
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Final value", f"{CUR}{m['final']:,.0f}")
+    k1.metric("Invested", f"{CUR}{m['invested']:,.0f}")
     k2.metric("Total growth", f"{m['net_gain_pct'] * 100:+,.1f}%",
-              help="Final value compared with everything you invested: "
+              help="Final value compared with everything invested: "
                    "final ÷ invested − 1.")
     if m["cagr"] is not None:
-        k3.metric("CAGR", f"{m['cagr'] * 100:,.2f}%",
-                  help="Average yearly growth of a single lump sum.")
+        k3.metric("CAGR", f"{m['cagr'] * 100:,.2f}%", help=cagr_help)
     else:
         k3.metric("IRR", f"{m['irr'] * 100:,.2f}%" if m["irr"] is not None else "—",
                   help="Average yearly return, taking the timing of each "
                        "contribution into account.")
-    k4.metric("Invested", f"{CUR}{m['invested']:,.0f}")
+    k4.metric("Final value", f"{CUR}{m['final']:,.0f}")
+
+
+for r in runs:
+    m = r["metrics"]
+    st.markdown(f"**{r['name']}** · {m['start']:%b %Y} – {m['end']:%b %Y}")
+    metric_row(m, "Average yearly growth of a single lump sum.")
+    for c in r["comparisons"]:
+        st.markdown(f"&nbsp;&nbsp;↳ *{c['label']}* — same deposits")
+        metric_row(c["metrics"], "Average yearly growth of the lump sum.")
+        if c["key"] == "cash" and value_mode == "Nominal":
+            st.caption(
+                f"Purchasing power: the cash buys **{c['metrics']['power_lost'] * 100:+,.1f}%** "
+                f"compared with when it was saved ({CPI_LABEL}). Switch to "
+                "*Inflation-adjusted* to see the shrinking value on the chart."
+            )
 
 fig_eq = go.Figure()
-for r in runs:
+for i, r in enumerate(runs):
     res = add_years_since_start(r["result"])
+    color = SCENARIO_COLORS[i % len(SCENARIO_COLORS)]
     fig_eq.add_trace(go.Scatter(
         x=res["years_since_start"], y=res["portfolio"],
-        mode="lines", name=r["name"],
+        mode="lines", name=r["name"], line=dict(color=color, width=2.5),
+        hovertemplate=f"{CUR}%{{y:,.0f}}",
     ))
+    for c in r["comparisons"]:
+        fig_eq.add_trace(go.Scatter(
+            x=res["years_since_start"], y=c["values"],
+            mode="lines", name=f"{r['name']} — {c['label']}",
+            line=dict(color=color, width=1.8,
+                      dash="dash" if c["key"] == "fixed" else "dot"),
+            hovertemplate=f"{CUR}%{{y:,.0f}}",
+        ))
 
 fig_eq.update_layout(
     xaxis_title="Years since start",
-    yaxis_title="Portfolio value",
+    yaxis_title=f"Portfolio value ({IDX['currency']})",
     yaxis_type="log" if log_scale == "Log" else "linear",
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
 )
 st.plotly_chart(fig_eq, width="stretch")
+if any(r["comparisons"] for r in runs):
+    st.caption("Solid line = invested in the index · dashed = fixed annual return · "
+               "dotted = cash savings.")
 
 # ---------------------------------------------------------------------------
 # YEARLY RETURNS bar chart
@@ -965,6 +1146,21 @@ for r in runs:
         "IRR": f"{m['irr']*100:,.2f}%" if m["irr"] is not None else "—",
         "Max DD": f"{m['max_dd']*100:,.1f}%",
     })
+    for c in r["comparisons"]:
+        cm = c["metrics"]
+        summary_rows.append({
+            "Scenario": f"↳ {c['label']}",
+            "Start": m["start"].strftime("%b %Y"),
+            "End": m["end"].strftime("%b %Y"),
+            "Years": round(m["years"], 2),
+            "Invested": f"{CUR}{cm['invested']:,.0f}",
+            "Final value": f"{CUR}{cm['final']:,.0f}",
+            "Net gain": f"{CUR}{cm['net_gain']:,.0f}",
+            "Total growth": f"{cm['net_gain_pct']*100:,.1f}%",
+            "CAGR": f"{cm['cagr']*100:,.2f}%" if cm["cagr"] is not None else "—",
+            "IRR": f"{cm['irr']*100:,.2f}%" if cm["irr"] is not None else "—",
+            "Max DD": f"{cm['max_dd']*100:,.1f}%",
+        })
 
 summary_df = pd.DataFrame(summary_rows)
 st.dataframe(summary_df, width="stretch", hide_index=True)
@@ -982,6 +1178,8 @@ st.markdown(
   for pure lump sum.
 - **IRR** — *Internal Rate of Return*. The average yearly growth rate when you
   made contributions over time. Fairer than CAGR when money entered at different moments.
+- **↳ rows** — the comparisons from the sidebar (*Compare with*): the same
+  deposits growing at a fixed yearly rate, or kept as cash with 0% interest.
 - **Max DD** — *Maximum Drawdown*. The biggest drop from a peak to a later low.
   A "-30%" means at some point your portfolio was 30% below its previous high.
 """
@@ -1004,6 +1202,10 @@ st.markdown("You can export the data in .csv format below.")
 
 for r in runs:
     res = r["result"].copy()
+    for c in r["comparisons"]:
+        col = ("fixed_return_value" if c["key"] == "fixed" else
+               "cash_value" if value_mode == "Nominal" else "cash_value_real")
+        res[col] = np.round(c["values"], 2)
     meta = (
         f"# Scenario: {r['name']}\n"
         f"# Start: {r['metrics']['start']:%Y-%m-%d}\n"
@@ -1014,6 +1216,8 @@ for r in runs:
         f"# Initial: {r['params']['initial']}\n"
         f"# Contribution: {r['params']['contribution']} ({r['params']['frequency']})\n"
         f"# Escalation: {r['params']['escalation']}\n"
+        + (f"# Fixed annual return: {fixed_rate}\n" if show_fixed else "")
+        + (f"# Cash: 0% interest, inflation = {CPI_LABEL}\n" if show_cash else "")
     )
     csv = meta + res.to_csv(index=False)
     st.download_button(

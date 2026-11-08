@@ -21,6 +21,9 @@ This repository is linked to the Streamlit app [S&P 500 Backtester](https://sp50
 - Time window chosen on the chart: fixed lengths of 5–30 years that you move by
   dragging on the chart, with a slider or one year at a time, or any custom start
   and end; shows the window's total growth and CAGR
+- Optional comparisons for every scenario, using the same deposits: a fixed
+  annual return (positive or negative), and cash savings at 0% interest that
+  lose value to the inflation of the index's currency area
 - Plots equity curve and yearly-returns chart (linear or log Y-axis)
 - Compares up to 3 scenarios side by side
 - Exports results as CSV
