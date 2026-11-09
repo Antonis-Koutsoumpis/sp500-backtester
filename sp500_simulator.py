@@ -120,9 +120,12 @@ automatically every day.
 - **Final value** — portfolio value at the end of the chosen period.
 - **Invested** — total capital you put in (initial + all contributions).
 - **Net gain** — final value minus invested.
-- **CAGR** — compound annual growth rate (only shown for pure lump sum).
-- **IRR** — internal rate of return; the fair annualized return when
-  contributions exist. Accounts for the timing of each cash flow.
+- **CAGR (Compound Annual Growth Rate)** — the average yearly growth of a
+  single amount invested once at the start. Shown for lump sums only.
+- **IRR (Internal Rate of Return)** — the average yearly return when money is
+  deposited at different moments; each deposit counts only for the time it was
+  actually invested. Shown when there are regular contributions. For a lump
+  sum, IRR and CAGR are the same number.
 - **Max drawdown** — the largest peak-to-trough decline during the period.
 
 **Important**
@@ -1118,7 +1121,42 @@ st.subheader("Return")
 SCENARIO_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c"]
 
 
-def metric_row(m, cagr_help):
+CAGR_HELP = (
+    "**CAGR — Compound Annual Growth Rate.** The average yearly growth rate "
+    "of a single amount invested once at the start: "
+    "(final value ÷ amount invested)^(1 ÷ years) − 1.\n\n"
+    "It answers: *by what fixed percentage would the money have had to grow "
+    "every year to end at this final value?* Ups and downs along the way are "
+    "smoothed out.\n\n"
+    "Shown here because this is a lump sum, with no later deposits. For a "
+    "lump sum, CAGR and IRR (Internal Rate of Return) give exactly the same "
+    "number."
+)
+
+IRR_HELP = (
+    "**IRR — Internal Rate of Return.** The average yearly return on your "
+    "money when you invest at different moments. It is the single fixed "
+    "yearly rate at which all your deposits, each growing from its own "
+    "deposit date, would add up to exactly the final value — like the "
+    "interest rate of a savings account that would have given the same "
+    "result.\n\n"
+    "**Why not CAGR (Compound Annual Growth Rate)?** CAGR assumes all the "
+    "money was invested on day one. With regular deposits that is wrong: a "
+    "deposit made in the last year only had one year to grow, but CAGR "
+    "spreads the gain as if every euro or dollar had been invested for the "
+    "whole period. That understates both good and bad results. IRR weighs "
+    "each deposit by how long it was actually invested.\n\n"
+    "**Example:** 5,000 a year in the S&P 500 from 2000 to 2009 turns "
+    "50,000 into 47,194. CAGR on those totals says −0.58% a year, but the "
+    "money actually earned −1.05% a year (IRR).\n\n"
+    "**Compare with the index CAGR** under the historical chart: that shows "
+    "how the market did, regardless of when you deposited. An IRR above it "
+    "means your deposit timing helped (e.g. buying more during a crash); "
+    "below it means the timing hurt."
+)
+
+
+def metric_row(m, cagr_help=CAGR_HELP):
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Invested", f"{CUR}{m['invested']:,.0f}")
     k2.metric("Total growth", f"{m['net_gain_pct'] * 100:+,.1f}%",
@@ -1128,18 +1166,17 @@ def metric_row(m, cagr_help):
         k3.metric("CAGR", f"{m['cagr'] * 100:,.2f}%", help=cagr_help)
     else:
         k3.metric("IRR", f"{m['irr'] * 100:,.2f}%" if m["irr"] is not None else "—",
-                  help="Average yearly return, taking the timing of each "
-                       "contribution into account.")
+                  help=IRR_HELP)
     k4.metric("Final value", f"{CUR}{m['final']:,.0f}")
 
 
 for r in runs:
     m = r["metrics"]
     st.markdown(f"**{r['name']}** · {m['start']:%b %Y} – {m['end']:%b %Y}")
-    metric_row(m, "Average yearly growth of a single lump sum.")
+    metric_row(m)
     for c in r["comparisons"]:
         st.markdown(f"&nbsp;&nbsp;↳ *{c['label']}* — same deposits")
-        metric_row(c["metrics"], "Average yearly growth of the lump sum.")
+        metric_row(c["metrics"])
         if c["key"] == "cash" and value_mode == "Nominal":
             st.caption(
                 f"Purchasing power: the cash buys **{c['metrics']['power_lost'] * 100:+,.1f}%** "
@@ -1261,11 +1298,15 @@ st.markdown(
 - **Final value** — what your portfolio is worth at the end.
 - **Net gain** — final value minus what you invested. Your profit in money terms.
 - **Total growth** — the same profit, expressed as a percentage of what you invested.
-- **CAGR** — *Compound Annual Growth Rate*. The average yearly growth rate,
-  assuming a single initial investment with no extra contributions. Shown only
-  for pure lump sum.
-- **IRR** — *Internal Rate of Return*. The average yearly growth rate when you
-  made contributions over time. Fairer than CAGR when money entered at different moments.
+- **CAGR** — *Compound Annual Growth Rate*. The average yearly growth rate of
+  a single amount invested once at the start: (final ÷ invested)^(1 ÷ years) − 1.
+  Shown only for a pure lump sum.
+- **IRR** — *Internal Rate of Return*. The average yearly return when you
+  deposit money at different moments: the one fixed yearly rate at which all
+  deposits, each growing from its own date, add up to the final value. CAGR
+  (Compound Annual Growth Rate) would treat all deposits as if they were made
+  on day one, which understates both gains and losses; IRR does not. For a
+  lump sum the two are identical.
 - **↳ rows** — the comparisons from the sidebar (*Compare with*): the same
   deposits growing at a fixed yearly rate, or kept as cash with 0% interest.
 - **Max DD** — *Maximum Drawdown*. The biggest drop from a peak to a later low.
