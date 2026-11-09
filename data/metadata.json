@@ -1,5 +1,5 @@
 {
-  "updated_utc": "2026-11-08 12:12 UTC",
+  "updated_utc": "2026-11-09 14:20 UTC",
   "failed_last_run": [],
   "indices": {
     "sp500": {
@@ -77,7 +77,7 @@
     "stoxx600": {
       "ticker": "^STOXX",
       "first_date": "2004-04-30",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "2004-04-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
@@ -90,7 +90,7 @@
     "eurostoxx50": {
       "ticker": "^STOXX50E",
       "first_date": "2007-03-30",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "2007-03-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
@@ -103,7 +103,7 @@
     "ftse100": {
       "ticker": "^FTSE",
       "first_date": "1984-01-31",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1984-01-31",
       "cpi": "UK CPI (all items)",
       "cpi_sources": [
@@ -115,7 +115,7 @@
     "nikkei225": {
       "ticker": "^N225",
       "first_date": "1965-01-29",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1965-01-29",
       "cpi": "Japan CPI (all items)",
       "cpi_sources": [
