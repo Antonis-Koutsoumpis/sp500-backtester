@@ -1,11 +1,11 @@
 {
-  "updated_utc": "2026-11-09 14:20 UTC",
+  "updated_utc": "2026-11-10 13:46 UTC",
   "failed_last_run": [],
   "indices": {
     "sp500": {
       "ticker": "^GSPC",
       "first_date": "1927-12-30",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1927-12-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -17,7 +17,7 @@
     "sp500_ew": {
       "ticker": "RSP",
       "first_date": "2003-05-30",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "2003-05-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -29,7 +29,7 @@
     "nasdaq100": {
       "ticker": "^NDX",
       "first_date": "1985-10-31",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1985-10-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -41,7 +41,7 @@
     "dowjones": {
       "ticker": "^DJI",
       "first_date": "1992-01-31",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1992-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -53,7 +53,7 @@
     "total_us": {
       "ticker": "^W5000",
       "first_date": "1989-01-31",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "1989-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -65,7 +65,7 @@
     "world": {
       "ticker": "URTH",
       "first_date": "2012-01-31",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "2012-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -77,7 +77,7 @@
     "stoxx600": {
       "ticker": "^STOXX",
       "first_date": "2004-04-30",
-      "last_date": "2026-11-09",
+      "last_date": "2026-11-10",
       "first_real_date": "2004-04-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
@@ -90,7 +90,7 @@
     "eurostoxx50": {
       "ticker": "^STOXX50E",
       "first_date": "2007-03-30",
-      "last_date": "2026-11-09",
+      "last_date": "2026-11-10",
       "first_real_date": "2007-03-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
@@ -103,7 +103,7 @@
     "ftse100": {
       "ticker": "^FTSE",
       "first_date": "1984-01-31",
-      "last_date": "2026-11-09",
+      "last_date": "2026-11-10",
       "first_real_date": "1984-01-31",
       "cpi": "UK CPI (all items)",
       "cpi_sources": [
@@ -115,7 +115,7 @@
     "nikkei225": {
       "ticker": "^N225",
       "first_date": "1965-01-29",
-      "last_date": "2026-11-09",
+      "last_date": "2026-11-10",
       "first_real_date": "1965-01-29",
       "cpi": "Japan CPI (all items)",
       "cpi_sources": [
@@ -127,7 +127,7 @@
     "em": {
       "ticker": "EEM",
       "first_date": "2003-04-30",
-      "last_date": "2026-11-06",
+      "last_date": "2026-11-09",
       "first_real_date": "2003-04-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
