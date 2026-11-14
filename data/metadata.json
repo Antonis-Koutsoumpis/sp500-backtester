@@ -1,11 +1,11 @@
 {
-  "updated_utc": "2026-11-13 13:27 UTC",
+  "updated_utc": "2026-11-14 12:31 UTC",
   "failed_last_run": [],
   "indices": {
     "sp500": {
       "ticker": "^GSPC",
       "first_date": "1927-12-30",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "1927-12-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -17,7 +17,7 @@
     "sp500_ew": {
       "ticker": "RSP",
       "first_date": "2003-05-30",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "2003-05-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -29,7 +29,7 @@
     "nasdaq100": {
       "ticker": "^NDX",
       "first_date": "1985-10-31",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "1985-10-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -41,7 +41,7 @@
     "dowjones": {
       "ticker": "^DJI",
       "first_date": "1992-01-31",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "1992-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -53,7 +53,7 @@
     "total_us": {
       "ticker": "^W5000",
       "first_date": "1989-01-31",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "1989-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -65,7 +65,7 @@
     "world": {
       "ticker": "URTH",
       "first_date": "2012-01-31",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "2012-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
@@ -127,7 +127,7 @@
     "em": {
       "ticker": "EEM",
       "first_date": "2003-04-30",
-      "last_date": "2026-11-12",
+      "last_date": "2026-11-13",
       "first_real_date": "2003-04-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
