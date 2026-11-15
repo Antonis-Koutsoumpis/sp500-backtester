@@ -89,3 +89,7 @@ streamlit run sp500_simulator.py
 pip install -r scripts/requirements-update.txt
 python scripts/update_data.py
 ```
+
+## License
+
+Free for personal and other noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use is not allowed without permission. Market and inflation data come from Yahoo Finance, FRED, Eurostat and ONS and remain under their own terms.

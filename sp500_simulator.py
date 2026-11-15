@@ -951,7 +951,16 @@ for idx, sc in enumerate(st.session_state.scenarios):
         "params": sc,
     })
 
+def license_note():
+    st.divider()
+    st.caption("Free for personal, noncommercial use under the "
+               "[PolyForm Noncommercial License 1.0.0]"
+               "(https://github.com/Antonis-Koutsoumpis/sp500-backtester/blob/main/LICENSE). "
+               "Commercial use is not allowed without permission. For information only, not investment advice.")
+
+
 if not runs:
+    license_note()
     st.stop()
 
 
@@ -1356,3 +1365,5 @@ for r in runs:
         mime="text/csv",
         key=f"dl_{r['name']}",
     )
+
+license_note()
