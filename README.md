@@ -4,7 +4,10 @@ Interactive Streamlit app to backtest investment strategies on major stock
 market indices using monthly historical data that is **updated automatically
 every day**.
 
-This repository is linked to the Streamlit app [S&P 500 Backtester](https://sp500-backtester.streamlit.app/).
+This repository is linked to two versions of the app, with the same calculations and data:
+
+- **Web app (works on phones and desktop):** [S&P 500 Backtester (GitHub Pages)](https://antonis-koutsoumpis.github.io/sp500-backtester/). It can be installed on a phone's home screen (iPhone: *Share → Add to Home Screen*; Android: menu ⋮ → *Install app*) and works offline with the last data it loaded.
+- **Streamlit app:** [S&P 500 Backtester](https://sp500-backtester.streamlit.app/).
 
 ## What it does
 
@@ -73,11 +76,22 @@ S&P 500 history if Yahoo's data were ever to start later than 1927.
 ## Files
 
 - `sp500_simulator.py` — main Streamlit app
+- `docs/` — web app for GitHub Pages (HTML, CSS, JavaScript, Plotly); same calculations as the Streamlit app
+- `scripts/export_web.py` — copies the data to `docs/data/` (run by the daily workflow after the update)
 - `indices.py` — list of indices, their tickers and descriptions
 - `scripts/update_data.py` — daily data updater
 - `data/index_prices.csv`, `data/metadata.json` — generated data
 - `.github/workflows/update-data.yml` — daily schedule
 - `requirements.txt` — app dependencies; `scripts/requirements-update.txt` — updater dependencies
+
+## Web app (GitHub Pages)
+
+The web app in `docs/` runs entirely in the browser. The daily workflow copies the
+data to `docs/data/` (with `scripts/export_web.py`), so both apps always use the same data.
+
+To publish it: in the repository on GitHub go to **Settings → Pages**, choose
+**Deploy from a branch**, branch **main**, folder **/docs**, and save.
+To try it locally: `cd docs && python -m http.server`, then open http://localhost:8000.
 
 ## Running locally
 

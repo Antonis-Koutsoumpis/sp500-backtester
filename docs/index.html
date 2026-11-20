@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Index Backtester</title>
+<meta name="description" content="Backtest lump sum and DCA strategies on the S&P 500 and other stock market indices, with data updated every day.">
+<meta name="theme-color" content="#1f4e8c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Backtester">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button id="menuBtn" class="icon-btn" aria-label="Settings and scenarios" aria-controls="settings" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span class="menu-label">Settings</span>
+  </button>
+  <h1 id="title">📈 Index Backtester</h1>
+</header>
+
+<div class="layout">
+  <aside id="settings" class="settings" aria-label="Settings and scenarios">
+    <div class="settings-head">
+      <h2>Index</h2>
+      <button id="closeSettings" class="icon-btn close" aria-label="Close settings">✕</button>
+    </div>
+    <label class="field">Choose an index <select id="index"></select></label>
+    <p class="hint" id="indexShort"></p>
+
+    <h3>Global settings</h3>
+    <div class="field">Value mode <div class="chips" id="mode"></div>
+      <p class="hint"><b>Nominal</b>: actual currency amounts of the day. <b>Inflation-adjusted</b>: past values in start-of-period purchasing power, using the inflation of the index's currency area.</p>
+    </div>
+    <div class="field">Y-axis scale (charts) <div class="chips" id="scale"></div></div>
+    <label class="field">Trend line (historical chart)
+      <select id="trend"><option>None</option><option>Linear</option><option>Polynomial</option><option>Logarithmic</option><option>Exponential</option></select>
+    </label>
+    <details class="hint"><summary>What the trend lines mean</summary>
+      <b>Linear</b>: a straight line, the index rises by the same amount every year. <b>Polynomial</b>: a curve that can bend up to 4 times (degree 2–5); follows the data closely but says little about the future. <b>Logarithmic</b>: rises quickly at first, then flattens out. <b>Exponential</b>: grows by the same <i>percentage</i> every year, the classic model for long-run stock market growth (a straight line on a log scale).
+    </details>
+    <label class="field" id="degreeBox" hidden>Polynomial degree: <span id="degreeVal">2</span>
+      <input type="range" id="degree" min="2" max="5" step="1" value="2">
+    </label>
+    <div class="field" id="scopeBox" hidden>Fit the trend over <div class="chips" id="scope"></div></div>
+
+    <h3>Scenarios</h3>
+    <div id="scenarios"></div>
+    <button id="addScenario" class="btn full">➕ Add scenario</button>
+
+    <h3>Compare with</h3>
+    <p class="hint">Uses the same deposits, on the same dates, as each scenario.</p>
+    <label class="check"><input type="checkbox" id="cmpFixed"> Fixed annual return</label>
+    <label class="field">Annual return (%) <input type="number" id="cmpRate" min="-50" max="50" step="0.5" value="10"></label>
+    <p class="hint">Can be negative, e.g. −2 for money that shrinks 2% a year. In inflation-adjusted mode it is a return above inflation.</p>
+    <label class="check"><input type="checkbox" id="cmpCash"> Cash savings (0% interest)</label>
+    <p class="hint" id="cashHint"></p>
+
+    <button id="applySettings" class="btn primary full only-mobile">Show results</button>
+  </aside>
+  <div id="backdrop" class="backdrop" hidden></div>
+
+  <main id="main">
+    <div id="loading" class="loading">Loading data…</div>
+    <div id="app" hidden>
+      <details class="panel">
+        <summary>ℹ️ What this app does</summary>
+        <div class="prose">
+          <p>This tool lets you simulate how a hypothetical investment in a stock market index would have performed if you had started at any month in its history: from the S&amp;P 500 (back to 1927) to the Nikkei 225, European and emerging-market indices. You can model a single lump sum, regular contributions, or a mix of both, and compare up to three scenarios side by side. The data is refreshed automatically every day.</p>
+          <p><b>How to use it</b></p>
+          <ol>
+            <li>In <b>Settings</b> (☰ on a phone), <b>choose an index</b> and whether you want results in <i>Nominal</i> or <i>Inflation-adjusted</i> terms.</li>
+            <li>Set up one or more scenarios: <b>Lump sum</b> (invest once at the start), <b>DCA</b> (Dollar-Cost Averaging: the same amount on a regular schedule), <b>Escalated DCA</b> (the amount rises each year by your escalation percentage) or <b>Custom</b>.</li>
+            <li>Pick the <b>time window</b> on the historical chart: choose a length (5–30 years, full history or custom), then tap or drag on the chart, or use the slider and ◀ ▶ buttons. Untick <i>Use the time window from the chart</i> in a scenario to type its own start date and duration.</li>
+            <li>Choose the <b>contribution frequency</b>: yearly, quarterly or monthly.</li>
+            <li>The app shows the final value, the total invested, the growth, the annualized return (CAGR or IRR) and the maximum drawdown, plus charts and a results table.</li>
+            <li>Download any scenario's monthly data as a CSV.</li>
+          </ol>
+          <p><b>Important:</b> all results are <b>price return only and exclude dividends</b>. Returns are in each index's own currency; inflation adjustment uses the inflation of that currency area.</p>
+        </div>
+      </details>
+
+      <h2 id="histTitle" class="section"></h2>
+      <div class="chips" id="winLen" role="group" aria-label="Time window"></div>
+      <div class="window-ctrl">
+        <div id="winSliderBox" class="grow"></div>
+        <button class="btn" id="back1">◀ 1 yr</button>
+        <button class="btn" id="fwd1">1 yr ▶</button>
+      </div>
+      <div id="histChart" class="chart tall"></div>
+      <p class="caption" id="trendInfo"></p>
+      <p><b>Selected window:</b> <span id="winLabel"></span></p>
+      <div class="tiles" id="winTiles"></div>
+      <p class="caption" id="winTip"></p>
+
+      <div class="panel" id="indexInfo"></div>
+      <details class="panel">
+        <summary>📚 Compare all available indices</summary>
+        <div class="table-wrap"><table id="guide"></table></div>
+        <p class="caption" id="updated"></p>
+      </details>
+
+      <div id="warnings"></div>
+      <div id="results">
+        <h2 class="section">Return</h2>
+        <div id="metrics"></div>
+        <div id="eqChart" class="chart"></div>
+        <p class="caption" id="eqNote"></p>
+
+        <h2 class="section">Yearly returns</h2>
+        <p class="caption">Each bar shows the portfolio's change over one calendar year. <b>Green = a positive year, red = a negative year.</b> Contributions made during the year are included in the portfolio value, so a green year does not necessarily mean the market went up: it means your portfolio ended the year higher than it started.</p>
+        <div id="yrChart" class="chart"></div>
+
+        <h2 class="section">Results table</h2>
+        <div class="table-wrap"><table id="summary"></table></div>
+        <details class="panel">
+          <summary>What the columns mean</summary>
+          <ul class="prose">
+            <li><b>Invested</b>: total money you put in (initial + all contributions).</li>
+            <li><b>Final value</b>: what your portfolio is worth at the end.</li>
+            <li><b>Net gain</b>: final value minus what you invested.</li>
+            <li><b>Total growth</b>: the same profit, as a percentage of what you invested.</li>
+            <li><b>CAGR</b> (Compound Annual Growth Rate): the average yearly growth of a single amount invested once at the start: (final ÷ invested)^(1 ÷ years) − 1. Shown only for a pure lump sum.</li>
+            <li><b>IRR</b> (Internal Rate of Return): the average yearly return when you deposit money at different moments: the one fixed yearly rate at which all deposits, each growing from its own date, add up to the final value. For a lump sum it equals the CAGR.</li>
+            <li><b>↳ rows</b>: the comparisons (<i>Compare with</i>): the same deposits growing at a fixed yearly rate, or kept as cash with 0% interest.</li>
+            <li><b>Max DD</b> (Maximum Drawdown): the biggest drop from a peak to a later low.</li>
+          </ul>
+        </details>
+        <p class="caption" id="modeNote"></p>
+
+        <h2 class="section">Export</h2>
+        <p>You can export the data in .csv format below.</p>
+        <div id="downloads" class="downloads"></div>
+      </div>
+
+      <footer class="footer">
+        Free for personal, noncommercial use under the
+        <a href="https://github.com/Antonis-Koutsoumpis/sp500-backtester/blob/main/LICENSE">PolyForm Noncommercial License 1.0.0</a>.
+        Commercial use is not allowed without permission. For information only, not investment advice. ·
+        <a href="https://github.com/Antonis-Koutsoumpis/sp500-backtester">GitHub</a>
+      </footer>
+    </div>
+  </main>
+</div>
+<script src="vendor/plotly-basic.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
