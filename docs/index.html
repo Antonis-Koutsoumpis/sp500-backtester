@@ -74,7 +74,7 @@
           <ol>
             <li>In <b>Settings</b> (☰ on a phone), <b>choose an index</b> and whether you want results in <i>Nominal</i> or <i>Inflation-adjusted</i> terms.</li>
             <li>Set up one or more scenarios: <b>Lump sum</b> (invest once at the start), <b>DCA</b> (Dollar-Cost Averaging: the same amount on a regular schedule), <b>Escalated DCA</b> (the amount rises each year by your escalation percentage) or <b>Custom</b>.</li>
-            <li>Pick the <b>time window</b> on the historical chart: choose a length (5–30 years, full history or custom), then tap or drag on the chart, or use the slider and ◀ ▶ buttons. Untick <i>Use the time window from the chart</i> in a scenario to type its own start date and duration.</li>
+            <li>Pick the <b>time window</b> on the historical chart: choose a length (5–50 years, full history or custom). The chart shows only that window; tap or drag on the full-history strip below it to move the window, drag across the main chart to zoom in, or use the slider and ◀ ▶ buttons. Untick <i>Use the time window from the chart</i> in a scenario to type its own start date and duration.</li>
             <li>Choose the <b>contribution frequency</b>: yearly, quarterly or monthly.</li>
             <li>The app shows the final value, the total invested, the growth, the annualized return (CAGR or IRR) and the maximum drawdown, plus charts and a results table.</li>
             <li>Download any scenario's monthly data as a CSV.</li>
@@ -92,6 +92,10 @@
       </div>
       <div id="histChart" class="chart tall"></div>
       <p class="caption" id="trendInfo"></p>
+      <div id="navBox">
+        <p class="caption" id="navCaption"></p>
+        <div id="navChart" class="chart nav"></div>
+      </div>
       <p><b>Selected window:</b> <span id="winLabel"></span></p>
       <div class="tiles" id="winTiles"></div>
       <p class="caption" id="winTip"></p>

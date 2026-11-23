@@ -220,6 +220,7 @@ details.field summary { cursor: pointer; padding: 0.3rem 0; }
 .prose li { margin: 0.25rem 0; }
 .chart { width: 100%; height: 420px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin: 0.5rem 0; }
 .chart.tall { height: 400px; }
+.chart.nav { height: 120px; margin-top: 0.2rem; }
 @media (max-width: 600px) { .chart { height: 340px; } .chart.tall { height: 320px; } }
 .window-ctrl { display: flex; gap: 0.5rem; align-items: end; margin: 0.5rem 0; flex-wrap: wrap; }
 .window-ctrl .grow { flex: 1 1 260px; min-width: 0; }

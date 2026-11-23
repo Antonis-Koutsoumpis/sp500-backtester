@@ -1,7 +1,7 @@
 /* Service worker: offline use and installation.
  * Network first: when online, the newest version from GitHub is always shown (and saved);
  * the saved copy is used only when offline. */
-const CACHE = "backtester-v2";
+const CACHE = "backtester-v3";
 const FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "vendor/plotly-basic.min.js",
   "data/index_prices.csv", "data/metadata.json", "data/indices.json", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"];
 

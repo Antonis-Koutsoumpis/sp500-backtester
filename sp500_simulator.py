@@ -104,7 +104,7 @@ automatically every day.
      each year by your escalation percentage.
    - **Custom** — set initial capital, contributions, and escalation freely.
 3. Pick the **time window** on the historical chart: choose a length
-   (5–30 years, full history or custom), then drag on the chart or use the
+   (5–50 years, full history or custom), then drag on the chart or use the
    slider and ◀ ▶ buttons to move it. The window's total growth and CAGR are
    shown right below the chart. (Untick *Use the time window from the chart*
    in a scenario to type its own start date and duration instead.)
@@ -213,7 +213,7 @@ ss = st.session_state
 VALUE_COL = "nominal" if value_mode == "Nominal" else "inflation_adjusted"
 MONTHS = df["date"].dt.to_period("M").astype(str).tolist()
 N_MONTHS = len(MONTHS)
-PRESET_YEARS = [5, 10, 15, 20, 25, 30]
+PRESET_YEARS = [5, 10, 15, 20, 25, 30, 50]
 PRESETS = [f"{n} years" for n in PRESET_YEARS if 12 * n <= N_MONTHS]
 WINDOW_OPTIONS = PRESETS + ["Full history", "Custom"]
 
@@ -249,46 +249,74 @@ if ss.get("win_start") not in MONTHS or ss.get("win_end") not in MONTHS:
     ss.win_start, ss.win_end = MONTHS[N_MONTHS - _L], MONTHS[-1]
 ss.setdefault("chart_nonce", 0)
 
-# Apply a click or drag made on the chart in the previous interaction.
+# Apply a click or drag made on one of the two charts in the previous
+# interaction. The main chart shows only the selected window: a drag there
+# zooms into a custom period inside it. The navigator below it shows the full
+# history: a drag or click there moves the window (fixed lengths) or sets a
+# custom start and end.
 _chart_key = f"hist_chart_{ss.chart_nonce}"
-try:
-    _sel = ss[_chart_key]["selection"] if _chart_key in ss else None
-except Exception:
-    _sel = None
-if _sel:
-    _boxes = _sel.get("box") or []
-    _points = _sel.get("points") or []
-    _si, _ei = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
-    _applied = False
-    if _boxes and _boxes[-1].get("x"):
-        _xs = [to_timestamp(x) for x in _boxes[-1]["x"]]
-        _a, _b = month_index(min(_xs)), month_index(max(_xs))
+_nav_key = f"nav_chart_{ss.chart_nonce}"
+
+
+def _selection(key):
+    try:
+        return ss[key]["selection"] if key in ss else None
+    except Exception:
+        return None
+
+
+def _apply_main(sel):
+    boxes = sel.get("box") or []
+    if not (boxes and boxes[-1].get("x")):
+        return False
+    xs = [to_timestamp(x) for x in boxes[-1]["x"]]
+    a, b = month_index(min(xs)), month_index(max(xs))
+    if b <= a:
+        b = min(a + 1, N_MONTHS - 1)
+        a = b - 1
+    ss.win_len = "Custom"
+    ss.win_start, ss.win_end = MONTHS[a], MONTHS[b]
+    return True
+
+
+def _apply_nav(sel):
+    boxes = sel.get("box") or []
+    points = sel.get("points") or []
+    si_, ei_ = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
+    if boxes and boxes[-1].get("x"):
+        xs = [to_timestamp(x) for x in boxes[-1]["x"]]
+        a, b = month_index(min(xs)), month_index(max(xs))
         if ss.win_len in PRESETS:
             # Fixed length: the drag says where the window should start.
-            _len = preset_months(ss.win_len) - 1
-            _a = min(_a, N_MONTHS - 1 - _len)
-            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_a + _len]
+            length = preset_months(ss.win_len) - 1
+            a = min(a, N_MONTHS - 1 - length)
+            ss.win_start, ss.win_end = MONTHS[a], MONTHS[a + length]
         else:
-            # Custom / full history: the drag sets both start and end.
-            if _b <= _a:
-                _b = min(_a + 1, N_MONTHS - 1)
-                _a = _b - 1
+            if b <= a:
+                b = min(a + 1, N_MONTHS - 1)
+                a = b - 1
             ss.win_len = "Custom"
-            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_b]
-        _applied = True
-    elif _points and _points[0].get("x") is not None:
-        _a = month_index(to_timestamp(_points[0]["x"]))
-        if ss.win_len == "Full history":
-            ss.win_len = "Custom"
-            ss.win_start, ss.win_end = MONTHS[min(_a, N_MONTHS - 2)], MONTHS[-1]
-        else:
-            _len = preset_months(ss.win_len) - 1 if ss.win_len in PRESETS else _ei - _si
-            _a = min(_a, N_MONTHS - 1 - _len)
-            ss.win_start, ss.win_end = MONTHS[_a], MONTHS[_a + _len]
-        _applied = True
-    if _applied:
-        ss.chart_nonce += 1  # a fresh chart widget clears the old selection
-        _chart_key = f"hist_chart_{ss.chart_nonce}"
+            ss.win_start, ss.win_end = MONTHS[a], MONTHS[b]
+        return True
+    if points and points[0].get("x") is not None:
+        a = month_index(to_timestamp(points[0]["x"]))
+        length = preset_months(ss.win_len) - 1 if ss.win_len in PRESETS else ei_ - si_
+        a = min(a, N_MONTHS - 1 - length)
+        ss.win_start, ss.win_end = MONTHS[a], MONTHS[a + length]
+        return True
+    return False
+
+
+_applied = False
+_sel_main, _sel_nav = _selection(_chart_key), _selection(_nav_key)
+if _sel_main:
+    _applied = _apply_main(_sel_main)
+if not _applied and _sel_nav:
+    _applied = _apply_nav(_sel_nav)
+if _applied:
+    ss.chart_nonce += 1  # fresh chart widgets clear the old selections
+    _chart_key = f"hist_chart_{ss.chart_nonce}"
+    _nav_key = f"nav_chart_{ss.chart_nonce}"
 
 
 def _slider_fixed_changed():
@@ -311,11 +339,14 @@ st.radio(
     key="win_len",
     horizontal=True,
     help=(
-        "**Fixed length (5–30 years):** drag on the chart starting where you "
-        "want the window to begin — it moves there and keeps its length. "
-        "Fine-tune with the slider or the ◀ ▶ buttons.\n\n"
-        "**Custom:** drag across the chart from the start to the end date you "
-        "want, or use the two-handle slider.\n\n"
+        "The chart shows only the selected window. The thin **full-history "
+        "strip** below it shows where the window lies.\n\n"
+        "**Fixed length (5–50 years):** drag or click on the strip where the "
+        "window should start — it moves there and keeps its length. Fine-tune "
+        "with the slider or the ◀ ▶ buttons.\n\n"
+        "**Custom:** drag across the strip from the start to the end date you "
+        "want, or use the two-handle slider. Dragging across the main chart "
+        "zooms into that part of the window.\n\n"
         "The scenarios in the sidebar use this window unless you untick "
         "*Use the time window from the chart*."
     ),
@@ -324,6 +355,9 @@ st.radio(
 # Resolve the window for the chosen length.
 si, ei = MONTHS.index(ss.win_start), MONTHS.index(ss.win_end)
 WIN_MONTHS = preset_months(ss.win_len)
+if WIN_MONTHS and ss.get("_prev_win_len") == "Full history":
+    si = N_MONTHS - WIN_MONTHS  # coming from the full history: most recent window
+ss._prev_win_len = ss.win_len
 if WIN_MONTHS:
     si = min(si, N_MONTHS - WIN_MONTHS)
     ei = si + WIN_MONTHS - 1
@@ -361,7 +395,7 @@ with slider_col:
             si, ei = MONTHS.index(_rng[0]), MONTHS.index(_rng[1])
     else:
         st.caption("Showing the full history. Choose a window length, or drag "
-                   "across the chart to select a period.")
+                   "across the chart to zoom into a period.")
 if ss.win_len != "Full history":
     back_col.button("◀ 1 yr", on_click=_shift_window, args=(-12,),
                     disabled=si == 0, width="stretch",
@@ -377,23 +411,18 @@ in_win = df.iloc[si: ei + 1]
 # Index growth is measured from the close of the month before the window
 # (when available), matching how the scenarios invest.
 base_win = df.iloc[max(si - 1, 0): ei + 1]
+IS_FULL = ss.win_len == "Full history"
 fig_hist = go.Figure()
 fig_hist.add_trace(go.Scatter(
-    x=df["date"], y=df[VALUE_COL], name=IDX["name"],
+    x=base_win["date"], y=base_win[VALUE_COL], name=IDX["name"],
     mode="lines+markers",
-    # Invisible markers make every month clickable and selectable.
+    # Invisible markers make every month selectable.
     marker=dict(size=8, opacity=0),
     selected=dict(marker=dict(opacity=0)),
     unselected=dict(marker=dict(opacity=0)),
-    line=dict(color="rgba(120, 130, 145, 0.9)", width=1.5),
+    line=dict(color="#1f77b4", width=2),
     hovertemplate="%{x|%b %Y}: %{y:,.2f}<extra></extra>",
 ))
-fig_hist.add_trace(go.Scatter(
-    x=base_win["date"], y=base_win[VALUE_COL], name="Selected window",
-    mode="lines", line=dict(color="#1f77b4", width=2.5), hoverinfo="skip",
-))
-fig_hist.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
-                   opacity=0.12, line_width=0, layer="below")
 
 
 def fit_trend(dates, values, kind, degree=2):
@@ -439,13 +468,16 @@ if trend_type != "None":
                                         trend_type, trend_degree)
         name = (f"Polynomial trend (degree {trend_degree})"
                 if trend_type == "Polynomial" else f"{trend_type} trend")
+        # Show the trend only over the window (it may be fitted on more).
+        _in = (fit_df["date"] >= base_win["date"].iloc[0]).to_numpy()
         fig_hist.add_trace(go.Scatter(
-            x=fit_df["date"], y=fitted, name=name, mode="lines",
+            x=fit_df["date"][_in], y=np.asarray(fitted)[_in], name=name, mode="lines",
             line=dict(color="#d62728", width=2, dash="dash"),
             hovertemplate=f"{name}: %{{y:,.2f}}<extra></extra>",
         ))
         trend_info = (name, formula, r2, fit_df["date"].iloc[0])
 fig_hist.update_layout(
+    xaxis=dict(range=[base_win["date"].iloc[0], base_win["date"].iloc[-1]]),
     dragmode="select",
     selectdirection="h",
     clickmode="event+select",  # a click selects the month under the cursor
@@ -461,10 +493,49 @@ st.plotly_chart(
     fig_hist,
     key=_chart_key,
     on_select="rerun",
-    selection_mode=("points", "box"),
+    selection_mode=("box",),
     width="stretch",
     config={"displaylogo": False},
 )
+
+# Navigator: the full history, with the window highlighted.
+if not IS_FULL:
+    fig_nav = go.Figure()
+    fig_nav.add_trace(go.Scatter(
+        x=df["date"], y=df[VALUE_COL], mode="lines+markers",
+        marker=dict(size=8, opacity=0),
+        selected=dict(marker=dict(opacity=0)),
+        unselected=dict(marker=dict(opacity=0)),
+        line=dict(color="rgba(120, 130, 145, 0.9)", width=1.2),
+        hovertemplate="%{x|%b %Y}<extra></extra>",
+    ))
+    fig_nav.add_trace(go.Scatter(
+        x=base_win["date"], y=base_win[VALUE_COL], mode="lines",
+        line=dict(color="#1f77b4", width=2), hoverinfo="skip",
+    ))
+    fig_nav.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
+                      opacity=0.15, line_width=0, layer="below")
+    fig_nav.update_layout(
+        dragmode="select",
+        selectdirection="h",
+        hovermode="x",
+        showlegend=False,
+        height=120,
+        margin=dict(t=4, b=4, l=10, r=10),
+        yaxis=dict(visible=False,
+                   type="log" if log_scale == "Log" else "linear"),
+        xaxis=dict(showgrid=False,
+                   range=[df["date"].iloc[0], df["date"].iloc[-1]]),
+    )
+    st.caption("Full history — drag or click here to move the window.")
+    st.plotly_chart(
+        fig_nav,
+        key=_nav_key,
+        on_select="rerun",
+        selection_mode=("points", "box"),
+        width="stretch",
+        config={"displaylogo": False, "displayModeBar": False},
+    )
 
 if trend_info:
     _name, _formula, _r2, _t0 = trend_info
@@ -488,10 +559,14 @@ w3.metric("Index total growth", f"{_wgrowth * 100:+,.1f}%",
 w4.metric("Index CAGR", f"{_wcagr * 100:,.2f}%" if _wcagr is not None else "—",
           help="Average yearly growth of the index over the window.")
 if WIN_MONTHS:
-    _tip = ("drag on the chart from the point where the window should start — "
-            "it keeps its length. Choose *Custom* to pick both start and end.")
+    _tip = ("drag or click on the full-history strip where the window should "
+            "start — it keeps its length. Drag across the main chart to zoom "
+            "into part of the window.")
+elif IS_FULL:
+    _tip = "drag across the chart to zoom into a period."
 else:
-    _tip = "drag across the chart from the start date to the end date you want."
+    _tip = ("drag across the full-history strip, or the main chart, to choose "
+            "the start and end you want.")
 st.caption(f"Tip: {_tip} The scenarios below are calculated over this window.")
 
 

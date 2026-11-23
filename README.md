@@ -21,9 +21,11 @@ This repository is linked to two versions of the app, with the same calculations
 - Runs the simulation in **nominal** or **inflation-adjusted** terms (user toggle)
 - Outputs: final value, total invested, net gain, CAGR, IRR, max drawdown
 - Opens on the full historical chart of the selected index (S&P 500 by default)
-- Time window chosen on the chart: fixed lengths of 5–30 years that you move by
-  dragging on the chart, with a slider or one year at a time, or any custom start
-  and end; shows the window's total growth and CAGR
+- Time window chosen on the chart: fixed lengths of 5–50 years, full history or
+  any custom start and end. The main chart shows only the selected window; a
+  thin full-history strip below it shows where the window lies — drag or tap
+  there to move it, drag across the main chart to zoom in, or use the slider
+  and ±1 year buttons. Shows the window's total growth and CAGR
 - Optional comparisons for every scenario, using the same deposits: a fixed
   annual return (positive or negative), and cash savings at 0% interest that
   lose value to the inflation of the index's currency area

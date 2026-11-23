@@ -9,7 +9,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const DAY = 86400000;
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const SCENARIO_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c"];
-const PRESET_YEARS = [5, 10, 15, 20, 25, 30];
+const PRESET_YEARS = [5, 10, 15, 20, 25, 30, 50];
 const TOUCH = window.matchMedia("(pointer: coarse)").matches;
 
 let INDICES = {}, CUR_SYM = {}, META = {}, ALL = {};   // ALL[index] = [{t, nominal, real}]
@@ -121,7 +121,14 @@ function shiftWindow(months) {
   S.winStart = MONTHS[si + months]; S.winEnd = MONTHS[ei + months];
   update();
 }
-/** A drag across the chart (box from x0 to x1) or a click/tap (x0 only). */
+/** A drag across the main chart: zoom into that part of the window. */
+function applyZoom(x0, x1) {
+  let a = monthIndex(Math.min(x0, x1)), b = monthIndex(Math.max(x0, x1));
+  if (b <= a) { b = Math.min(a + 1, N - 1); a = b - 1; }
+  S.winLen = "Custom"; S.winStart = MONTHS[a]; S.winEnd = MONTHS[b];
+  update();
+}
+/** A drag across the full-history strip (box from x0 to x1) or a click/tap (x0 only). */
 function applySelection(x0, x1) {
   const si = MONTHS.indexOf(S.winStart), ei = MONTHS.indexOf(S.winEnd);
   if (x1 != null) {
@@ -336,7 +343,11 @@ function renderHistory(si, ei) {
   for (const o of windowOptions()) {
     const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = o;
     b.setAttribute("aria-pressed", o === S.winLen);
-    b.onclick = () => { S.winLen = o; update(); };
+    b.onclick = () => {
+      // from the full history to a fixed length: show the most recent window
+      if (S.winLen === "Full history" && presetMonths(o)) S.winStart = MONTHS[N - presetMonths(o)];
+      S.winLen = o; update();
+    };
     box.appendChild(b);
   }
   // slider(s)
@@ -359,18 +370,19 @@ function renderHistory(si, ei) {
     };
     a.onchange = apply; b.onchange = apply;
   } else {
-    sb.innerHTML = `<p class="caption">Showing the full history. Choose a window length, or ${TOUCH ? "tap the chart" : "drag across the chart"} to select a period.</p>`;
+    sb.innerHTML = `<p class="caption">Showing the full history. Choose a window length${TOUCH ? "" : ", or drag across the chart to zoom into a period"}.</p>`;
   }
   const full = S.winLen === "Full history";
   $("#back1").hidden = $("#fwd1").hidden = full;
   $("#back1").disabled = si === 0; $("#fwd1").disabled = ei === N - 1;
 
   // chart
+  // The main chart shows only the selected window (from the close of the
+  // month before it, where the scenarios start investing).
   const base = DF.slice(Math.max(si - 1, 0), ei + 1);
-  const xs = DF.map((r) => isoX(r.t)), ys = DF.map((r) => r[VALUE]);
+  const bx = base.map((r) => isoX(r.t));
   const traces = [
-    { x: xs, y: ys, name: IDX.name, mode: "lines", line: { color: "rgba(120,130,145,0.9)", width: 1.5 }, hovertemplate: "%{x|%b %Y}: %{y:,.2f}<extra></extra>" },
-    { x: base.map((r) => isoX(r.t)), y: base.map((r) => r[VALUE]), name: "Selected window", mode: "lines", line: { color: "#1f77b4", width: 2.5 }, hoverinfo: "skip" },
+    { x: bx, y: base.map((r) => r[VALUE]), name: IDX.name, mode: "lines", line: { color: "#1f77b4", width: 2 }, hovertemplate: "%{x|%b %Y}: %{y:,.2f}<extra></extra>" },
   ];
   let trendInfo = null;
   if (S.trend !== "None") {
@@ -378,21 +390,41 @@ function renderHistory(si, ei) {
     if (fit.length > Math.max(3, S.degree + 1)) {
       const r = fitTrend(fit.map((d) => d.t), fit.map((d) => d[VALUE]), S.trend, S.degree);
       const name = S.trend === "Polynomial" ? `Polynomial trend (degree ${S.degree})` : `${S.trend} trend`;
-      traces.push({ x: fit.map((d) => isoX(d.t)), y: r.fitted, name, mode: "lines", line: { color: "#d62728", width: 2, dash: "dash" }, hovertemplate: `${name}: %{y:,.2f}<extra></extra>` });
+      // fitted on `fit`, drawn only over the window
+      const k0 = fit.findIndex((d) => d.t >= base[0].t);
+      traces.push({ x: fit.slice(k0).map((d) => isoX(d.t)), y: r.fitted.slice(k0), name, mode: "lines", line: { color: "#d62728", width: 2, dash: "dash" }, hovertemplate: `${name}: %{y:,.2f}<extra></extra>` });
       trendInfo = { name, ...r, t0: fit[0].t };
     }
   }
   const layout = themeLayout({
     dragmode: TOUCH ? false : "select", selectdirection: "h", hovermode: "x", showlegend: false,
     yaxis: { title: { text: S.mode === "Nominal" ? `Index level (${IDX.currency})` : `Index level (today's ${IDX.currency})` }, type: S.scale === "Log" ? "log" : "linear" },
-    xaxis: { type: "date" },
-    shapes: [{ type: "rect", xref: "x", yref: "paper", x0: isoX(monthStart(Date.UTC(+S.winStart.slice(0, 4), +S.winStart.slice(5) - 1, 1))), x1: isoX(monthEnd(S.winEnd)), y0: 0, y1: 1, fillcolor: "#1f77b4", opacity: 0.12, line: { width: 0 }, layer: "below" }],
+    xaxis: { type: "date", range: [bx[0], bx[bx.length - 1]] },
   });
   Plotly.react("histChart", traces, layout, { ...PLOT_CONFIG, modeBarButtonsToRemove: ["lasso2d", "autoScale2d"] });
+
+  // Navigator: the full history with the window highlighted.
+  $("#navBox").hidden = full;
+  if (!full) {
+    $("#navCaption").textContent = `Full history — ${TOUCH ? "tap" : "drag or click"} here to move the window.`;
+    const nav = [
+      { x: DF.map((r) => isoX(r.t)), y: DF.map((r) => r[VALUE]), mode: "lines", line: { color: "rgba(120,130,145,0.9)", width: 1.2 }, hovertemplate: "%{x|%b %Y}<extra></extra>" },
+      { x: bx, y: base.map((r) => r[VALUE]), mode: "lines", line: { color: "#1f77b4", width: 2 }, hoverinfo: "skip" },
+    ];
+    const navLayout = themeLayout({
+      dragmode: TOUCH ? false : "select", selectdirection: "h", hovermode: "x", showlegend: false,
+      margin: { t: 4, b: 22, l: 10, r: 10 },
+      yaxis: { visible: false, type: S.scale === "Log" ? "log" : "linear" },
+      xaxis: { type: "date", showgrid: false, range: [isoX(DF[0].t), isoX(DF[N - 1].t)] },
+      shapes: [{ type: "rect", xref: "x", yref: "paper", x0: isoX(monthStart(Date.UTC(+S.winStart.slice(0, 4), +S.winStart.slice(5) - 1, 1))), x1: isoX(monthEnd(S.winEnd)), y0: 0, y1: 1, fillcolor: "#1f77b4", opacity: 0.15, line: { width: 0 }, layer: "below" }],
+    });
+    Plotly.react("navChart", nav, navLayout, { ...PLOT_CONFIG, displayModeBar: false });
+  }
   if (!histHandlersBound) {
-    const el = $("#histChart");
-    el.on("plotly_selected", (ev) => { if (ev && ev.range && ev.range.x) applySelection(Date.parse(ev.range.x[0]), Date.parse(ev.range.x[1])); });
-    el.on("plotly_click", (ev) => { if (ev && ev.points && ev.points[0]) applySelection(Date.parse(ev.points[0].x)); });
+    const el = $("#histChart"), nv = $("#navChart");
+    el.on("plotly_selected", (ev) => { if (ev && ev.range && ev.range.x) applyZoom(Date.parse(ev.range.x[0]), Date.parse(ev.range.x[1])); });
+    nv.on("plotly_selected", (ev) => { if (ev && ev.range && ev.range.x) applySelection(Date.parse(ev.range.x[0]), Date.parse(ev.range.x[1])); });
+    nv.on("plotly_click", (ev) => { if (ev && ev.points && ev.points[0]) applySelection(Date.parse(ev.points[0].x)); });
     histHandlersBound = true;
   }
   $("#trendInfo").innerHTML = trendInfo
@@ -408,8 +440,9 @@ function renderHistory(si, ei) {
     + tile("Index CAGR", cagr != null ? pct(cagr, 2) : "—", "Average yearly growth of the index over the window.");
   const how = TOUCH ? "tap" : "drag on";
   $("#winTip").textContent = "Tip: " + (W
-    ? `${how} the chart where the window should start: it keeps its length. Choose Custom to pick both start and end.`
-    : `${TOUCH ? "tap the chart, or use the sliders," : "drag across the chart from the start date to the end date you want."}`) + " The scenarios below are calculated over this window.";
+    ? `${how} the full-history strip where the window should start: it keeps its length.${TOUCH ? "" : " Drag across the main chart to zoom into part of the window."}`
+    : full ? (TOUCH ? "choose a window length to look at a period." : "drag across the chart to zoom into a period.")
+    : `${TOUCH ? "tap the full-history strip to move the window, or use the sliders." : "drag across the full-history strip, or the main chart, to choose the start and end you want."}`) + " The scenarios below are calculated over this window.";
 }
 
 function tile(label, value, help) {
