@@ -1,15 +1,14 @@
 {
-  "updated_utc": "2026-11-23 16:29 UTC",
+  "updated_utc": "2026-11-24 16:29 UTC",
   "failed_last_run": [],
   "indices": {
     "sp500": {
       "ticker": "^GSPC",
       "first_date": "1927-12-30",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "1927-12-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -17,11 +16,10 @@
     "sp500_ew": {
       "ticker": "RSP",
       "first_date": "2003-05-30",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "2003-05-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -29,11 +27,10 @@
     "nasdaq100": {
       "ticker": "^NDX",
       "first_date": "1985-10-31",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "1985-10-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -41,11 +38,10 @@
     "dowjones": {
       "ticker": "^DJI",
       "first_date": "1992-01-31",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "1992-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -53,11 +49,10 @@
     "total_us": {
       "ticker": "^W5000",
       "first_date": "1989-01-31",
-      "last_date": "2026-11-20",
+      "last_date": "2026-11-23",
       "first_real_date": "1989-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -65,11 +60,10 @@
     "world": {
       "ticker": "URTH",
       "first_date": "2012-01-31",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "2012-01-31",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
@@ -77,12 +71,11 @@
     "stoxx600": {
       "ticker": "^STOXX",
       "first_date": "2004-04-30",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "2004-04-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
         "eurostat:M.I15.CP00.EA",
-        "dbnomics:Eurostat/prc_hicp_midx/M.I15.CP00.EA",
         "bis:XM"
       ],
       "cpi_last_month": "2026-09"
@@ -90,12 +83,11 @@
     "eurostoxx50": {
       "ticker": "^STOXX50E",
       "first_date": "2007-03-30",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "2007-03-30",
       "cpi": "Euro-area HICP (all items)",
       "cpi_sources": [
         "eurostat:M.I15.CP00.EA",
-        "dbnomics:Eurostat/prc_hicp_midx/M.I15.CP00.EA",
         "bis:XM"
       ],
       "cpi_last_month": "2026-09"
@@ -103,7 +95,7 @@
     "ftse100": {
       "ticker": "^FTSE",
       "first_date": "1984-01-31",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "1984-01-31",
       "cpi": "UK CPI (all items)",
       "cpi_sources": [
@@ -119,19 +111,17 @@
       "first_real_date": "1965-01-29",
       "cpi": "Japan CPI (all items)",
       "cpi_sources": [
-        "bis:JP",
-        "dbnomics:OECD/DSD_PRICES@DF_PRICES_ALL/JPN.M.N.CPI.IX._T.N._Z"
+        "bis:JP"
       ],
       "cpi_last_month": "2026-09"
     },
     "em": {
       "ticker": "EEM",
       "first_date": "2003-04-30",
-      "last_date": "2026-11-23",
+      "last_date": "2026-11-24",
       "first_real_date": "2003-04-30",
       "cpi": "US CPI-U (all items)",
       "cpi_sources": [
-        "dbnomics:BLS/cu/CUUR0000SA0",
         "bis:US"
       ],
       "cpi_last_month": "2026-09"
