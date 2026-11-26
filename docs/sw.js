@@ -1,9 +1,9 @@
 /* Service worker: offline use and installation.
  * Network first: when online, the newest version from GitHub is always shown (and saved);
  * the saved copy is used only when offline. */
-const CACHE = "backtester-v3";
+const CACHE = "backtester-v4";
 const FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "vendor/plotly-basic.min.js",
-  "data/index_prices.csv", "data/metadata.json", "data/indices.json", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"];
+  "data/index_prices.csv", "data/metadata.json", "data/indices.json", "data/bear_markets.json", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

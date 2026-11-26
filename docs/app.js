@@ -48,8 +48,9 @@ function fmtG(c) {
 const S = {
   index: "sp500", mode: "Nominal", scale: "Linear", trend: "None", degree: 2, scope: "Full history",
   winLen: null, winStart: null, winEnd: null,
-  scenarios: [], cmpFixed: false, cmpRate: 10, cmpCash: false,
+  scenarios: [], cmpFixed: false, cmpRate: 10, cmpCash: false, showBears: false, showCauses: false,
 };
+let BEARS = [];   // S&P 500 bear markets, from data/bear_markets.json (bear_markets.py)
 let DF = [], MONTHS = [], N = 0, MIN_DATE = 0, MAX_DATE = 0, VALUE = "nominal";
 
 function scenarioDefaults(kind) {
@@ -333,6 +334,43 @@ function themeLayout(extra) {
 const PLOT_CONFIG = { displaylogo: false, responsive: true, displayModeBar: !TOUCH, modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"] };
 const isoX = (t) => ymd(t);
 
+/* ---------------- S&P 500 bear markets (same as add_bear_markets in bear_markets.py) ---------------- */
+const BEAR_FILL = "rgba(128, 128, 128, 0.18)";
+const bearDate = (t) => { const d = new Date(t); return `${String(d.getUTCDate()).padStart(2, "0")} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+const bearsIn = (x0, x1) => BEARS.filter((b) => Date.parse(b.trough) >= x0 && Date.parse(b.peak) <= x1);
+/** Breaks text into lines of about n characters (<br>), so a hover box fits on a phone. */
+const wrapText = (text, n) => text.split(" ").reduce((lines, w) => {
+  const last = lines[lines.length - 1];
+  if (last && (last + " " + w).length <= n) lines[lines.length - 1] = last + " " + w; else lines.push(w);
+  return lines;
+}, []).join("<br>");
+/** Plotly shapes (grey areas) and, with causes, labels for the bear markets between x0 and x1 (ms). */
+function bearLayout(x0, x1, causes, widthPx = 0) {
+  const shapes = [], annotations = [];
+  // labels closer than 13 px apart would overlap: keep the first (the list under the chart has them all)
+  const minGap = widthPx ? 13 * (x1 - x0) / widthPx : 0;
+  let lastLabel = -Infinity;
+  for (const b of bearsIn(x0, x1)) {
+    const p = Date.parse(b.peak), t = Date.parse(b.trough);
+    shapes.push({ type: "rect", xref: "x", yref: "paper", x0: b.peak, x1: b.trough, y0: 0, y1: 1, fillcolor: BEAR_FILL, line: { width: 0 }, layer: "below" });
+    if (causes) {
+      const a = Math.max(p, x0), z = Math.min(t, x1), mid = a + (z - a) / 2;
+      if (mid - lastLabel < minGap) continue;
+      lastLabel = mid;
+      annotations.push({ x: ymd(mid), xref: "x", y: 1, yref: "paper", yanchor: "top", text: esc(b.label), textangle: -90, showarrow: false,
+        font: { size: 10, color: "rgba(128, 128, 128, 0.95)" },
+        hovertext: `<b>${esc(b.label)}</b><br>${bearDate(p)} – ${bearDate(t)}: ${b.decline.toFixed(1)}%<br>${wrapText(esc(b.cause), 45)}` });
+    }
+  }
+  return { shapes, annotations };
+}
+function bearList(x0, x1) {
+  const list = bearsIn(x0, x1);
+  return `<details class="panel"><summary>What drove the S&amp;P 500 bear markets in this window (${list.length})</summary>
+    ${list.length ? `<ul class="prose">${list.map((b) => `<li><b>${esc(b.label)}</b> · ${bearDate(Date.parse(b.peak))} – ${bearDate(Date.parse(b.trough))} · S&amp;P 500 ${b.decline.toFixed(1)}%<br>${esc(b.cause)}</li>`).join("")}</ul>` : `<p class="caption">No S&amp;P 500 bear market in this window.</p>`}
+    <p class="caption">Peak-to-low dates and falls of the S&amp;P 500 (daily closes; Yardeni Research). The chart uses month-end values, so its fall can look smaller.</p></details>`;
+}
+
 /* ---------------- rendering ---------------- */
 let histHandlersBound = false;
 function renderHistory(si, ei) {
@@ -396,8 +434,9 @@ function renderHistory(si, ei) {
       trendInfo = { name, ...r, t0: fit[0].t };
     }
   }
+  const bears = S.showBears ? bearLayout(base[0].t, base[base.length - 1].t, S.showCauses, $("#histChart").clientWidth * 0.85) : { shapes: [], annotations: [] };
   const layout = themeLayout({
-    dragmode: TOUCH ? false : "select", selectdirection: "h", hovermode: "x", showlegend: false,
+    dragmode: TOUCH ? false : "select", selectdirection: "h", hovermode: "x", showlegend: false, ...bears,
     yaxis: { title: { text: S.mode === "Nominal" ? `Index level (${IDX.currency})` : `Index level (today's ${IDX.currency})` }, type: S.scale === "Log" ? "log" : "linear" },
     xaxis: { type: "date", range: [bx[0], bx[bx.length - 1]] },
   });
@@ -416,7 +455,8 @@ function renderHistory(si, ei) {
       margin: { t: 4, b: 22, l: 10, r: 10 },
       yaxis: { visible: false, type: S.scale === "Log" ? "log" : "linear" },
       xaxis: { type: "date", showgrid: false, range: [isoX(DF[0].t), isoX(DF[N - 1].t)] },
-      shapes: [{ type: "rect", xref: "x", yref: "paper", x0: isoX(monthStart(Date.UTC(+S.winStart.slice(0, 4), +S.winStart.slice(5) - 1, 1))), x1: isoX(monthEnd(S.winEnd)), y0: 0, y1: 1, fillcolor: "#1f77b4", opacity: 0.15, line: { width: 0 }, layer: "below" }],
+      shapes: [...(S.showBears ? bearLayout(DF[0].t, DF[N - 1].t, false).shapes : []),
+        { type: "rect", xref: "x", yref: "paper", x0: isoX(monthStart(Date.UTC(+S.winStart.slice(0, 4), +S.winStart.slice(5) - 1, 1))), x1: isoX(monthEnd(S.winEnd)), y0: 0, y1: 1, fillcolor: "#1f77b4", opacity: 0.15, line: { width: 0 }, layer: "below" }],
     });
     Plotly.react("navChart", nav, navLayout, { ...PLOT_CONFIG, displayModeBar: false });
   }
@@ -429,6 +469,7 @@ function renderHistory(si, ei) {
   }
   $("#trendInfo").innerHTML = trendInfo
     ? `<span style="color:#d62728"><b>- - -</b></span> <b>${esc(trendInfo.name)}</b> (${S.scope.toLowerCase()}): <code>${esc(trendInfo.formula)}</code>, with t = years since ${monthLabel(monthStr(trendInfo.t0))} · R² = ${trendInfo.r2.toFixed(3)} (1 = perfect fit)` : "";
+  $("#bearInfo").innerHTML = S.showBears && S.showCauses ? bearList(base[0].t, base[base.length - 1].t) : "";
 
   // window numbers
   const v0 = base[0][VALUE], v1 = base[base.length - 1][VALUE];
@@ -679,6 +720,9 @@ function buildSidebar() {
   $("#cmpRate").disabled = true;
   $("#cmpRate").onchange = (e) => { let v = parseFloat(e.target.value); if (!Number.isFinite(v)) v = 10; S.cmpRate = Math.max(-50, Math.min(50, v)); e.target.value = S.cmpRate; update(); };
   $("#cmpCash").onchange = (e) => { S.cmpCash = e.target.checked; update(); };
+  $("#showBears").disabled = !BEARS.length;
+  $("#showBears").onchange = (e) => { S.showBears = e.target.checked; $("#showCauses").disabled = !S.showBears; update(); };
+  $("#showCauses").onchange = (e) => { S.showCauses = e.target.checked; update(); };
   renderScenarioForms();
 }
 
@@ -717,6 +761,7 @@ async function init() {
     fetch("data/index_prices.csv").then((r) => r.text()),
     fetch("data/metadata.json").then((r) => (r.ok ? r.json() : {})).catch(() => ({})),
     fetch("data/indices.json").then((r) => r.json()),
+    fetch("data/bear_markets.json").then((r) => (r.ok ? r.json() : [])).then((b) => { BEARS = b; }).catch(() => {}),
   ]);
   ALL = parseCSV(csv); META = meta; INDICES = idx.indices; CUR_SYM = idx.currency_symbol;
   AVAILABLE = Object.keys(INDICES).filter((k) => ALL[k] && ALL[k].length);

@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from datetime import date
 
 from indices import INDICES, CURRENCY_SYMBOL
+from bear_markets import BEAR_HELP, add_bear_markets, bears_in_range
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -191,6 +192,19 @@ if trend_type != "None":
         key="trend_scope",
         horizontal=True,
     )
+
+show_bears = st.sidebar.checkbox(
+    "Shade S&P 500 bear markets", key="show_bears", help=BEAR_HELP,
+)
+show_causes = st.sidebar.checkbox(
+    "Show what drove each bear market", key="show_causes",
+    disabled=not show_bears,
+    help="Labels each grey area with its main cause (e.g. the dot-com "
+         "bubble, the 2008 financial crisis, a war). Hover a label for the "
+         "dates, the fall and a short explanation; the list is also shown "
+         "below the chart.",
+)
+show_causes = show_bears and show_causes
 
 df = index_frame(index_id, value_mode)
 if len(df) < 2:
@@ -476,6 +490,9 @@ if trend_type != "None":
             hovertemplate=f"{name}: %{{y:,.2f}}<extra></extra>",
         ))
         trend_info = (name, formula, r2, fit_df["date"].iloc[0])
+if show_bears:
+    add_bear_markets(fig_hist, base_win["date"].iloc[0], base_win["date"].iloc[-1],
+                     causes=show_causes)
 fig_hist.update_layout(
     xaxis=dict(range=[base_win["date"].iloc[0], base_win["date"].iloc[-1]]),
     dragmode="select",
@@ -515,6 +532,8 @@ if not IS_FULL:
     ))
     fig_nav.add_vrect(x0=WIN_START, x1=WIN_END, fillcolor="#1f77b4",
                       opacity=0.15, line_width=0, layer="below")
+    if show_bears:
+        add_bear_markets(fig_nav, df["date"].iloc[0], df["date"].iloc[-1])
     fig_nav.update_layout(
         dragmode="select",
         selectdirection="h",
@@ -544,6 +563,19 @@ if trend_info:
         f"({trend_scope.lower()}): `{_formula}`, with t = years since "
         f"{_t0:%b %Y} · R² = {_r2:.3f} (1 = perfect fit)"
     )
+
+if show_causes:
+    _bears = bears_in_range(base_win["date"].iloc[0], base_win["date"].iloc[-1])
+    with st.expander(f"What drove the S&P 500 bear markets in this window ({len(_bears)})",
+                     expanded=False):
+        if _bears.empty:
+            st.caption("No S&P 500 bear market in this window.")
+        for r in _bears.itertuples():
+            st.markdown(f"**{r.label}** · {r.peak:%d %b %Y} – {r.trough:%d %b %Y} · "
+                        f"S&P 500 {r.decline:.1f}%  \n{r.cause}")
+        st.caption("Peak-to-low dates and falls of the S&P 500 (daily closes; "
+                   "Yardeni Research). The chart uses month-end values, so its "
+                   "fall can look smaller.")
 
 _v0, _v1 = base_win[VALUE_COL].iloc[0], base_win[VALUE_COL].iloc[-1]
 _wyears = (base_win["date"].iloc[-1] - base_win["date"].iloc[0]).days / 365.25

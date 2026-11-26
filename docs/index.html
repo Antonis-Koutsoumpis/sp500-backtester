@@ -46,6 +46,9 @@
       <input type="range" id="degree" min="2" max="5" step="1" value="2">
     </label>
     <div class="field" id="scopeBox" hidden>Fit the trend over <div class="chips" id="scope"></div></div>
+    <label class="check"><input type="checkbox" id="showBears"> Shade S&amp;P 500 bear markets</label>
+    <label class="check"><input type="checkbox" id="showCauses" disabled> Show what drove each bear market</label>
+    <p class="hint">Grey areas: falls of the S&amp;P 500 of 20% or more, from the closing high to the low (22 since 1928, dates from Yardeni Research), also when another index is shown. The labels name the main cause (e.g. the dot-com bubble, the 2008 financial crisis, a war); the list under the chart explains each one.</p>
 
     <h3>Scenarios</h3>
     <div id="scenarios"></div>
@@ -92,6 +95,7 @@
       </div>
       <div id="histChart" class="chart tall"></div>
       <p class="caption" id="trendInfo"></p>
+      <div id="bearInfo"></div>
       <div id="navBox">
         <p class="caption" id="navCaption"></p>
         <div id="navChart" class="chart nav"></div>

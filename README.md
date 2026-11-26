@@ -32,6 +32,9 @@ This repository is linked to two versions of the app, with the same calculations
 - Optional trend line on the historical chart: linear, polynomial (degree 2–5),
   logarithmic or exponential, fitted over the full history or the selected
   window, with its formula and R²
+- Optional grey shading of the S&P 500's bear markets (falls of 20% or more,
+  peak to low; 22 since 1928) on the historical chart, with an option to label
+  what drove each one (`bear_markets.py`; add a row when a new one has ended)
 - Plots equity curve and yearly-returns chart (linear or log Y-axis)
 - Compares up to 3 scenarios side by side
 - Exports results as CSV
