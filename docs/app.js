@@ -723,6 +723,7 @@ function buildSidebar() {
   $("#showBears").disabled = !BEARS.length;
   $("#showBears").onchange = (e) => { S.showBears = e.target.checked; $("#showCauses").disabled = !S.showBears; update(); };
   $("#showCauses").onchange = (e) => { S.showCauses = e.target.checked; update(); };
+  $("#bearHelpBtn").onclick = (e) => { const box = $("#bearHelp"); box.hidden = !box.hidden; e.currentTarget.setAttribute("aria-expanded", !box.hidden); };
   renderScenarioForms();
 }
 
